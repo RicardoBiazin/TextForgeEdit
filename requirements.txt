@@ -1,0 +1,15 @@
+# TextForgeEdit -- dependencias obrigatorias.
+#
+# Interpretador: Python 3.13.
+# Instalar:  .venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# Interface grafica. LGPLv3, compativel com o MIT deste projeto.
+# NAO usar o metapacote 'PySide6': ele arrasta PySide6-Addons, um wheel de
+# 169 MB com QtWebEngine, Qt3D, Charts e Multimedia que nao usamos.
+PySide6-Essentials>=6.9,<7
+
+# Deteccao de encoding. MIT, ao contrario do chardet (LGPL). Puro Python.
+charset-normalizer>=3.4,<4
+
+# Empacotamento. So' de desenvolvimento; nao vai dentro do .exe.
+pyinstaller>=6.16,<7

@@ -1,0 +1,15 @@
+# Ambiente
+.venv/
+__pycache__/
+*.pyc
+
+# Build
+build/
+dist/
+*.spec.bak
+
+# Temporarios de gravacao atomica (ver tfedit/gravacao.py)
+*.tfenew
+
+# Fixtures grandes geradas pelos testes
+tests/fixtures/
