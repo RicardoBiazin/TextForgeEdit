@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QAction, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox,
-                               QProgressBar, QStatusBar, QTabWidget, QVBoxLayout,
-                               QWidget)
+                               QProgressBar, QStatusBar, QTabWidget,
+                               QVBoxLayout, QWidget)
 
-from tfedit import VERSAO, busca, log_interno
+from tfedit import APP, AUTOR, VERSAO, busca, log_interno
 from tfedit.gravacao import FalhaNaTroca, SemEspaco
 from tfedit.interface.aba import Aba
 from tfedit.interface.barra_busca import BarraDeBusca
@@ -29,6 +29,24 @@ FILTRO = ("Arquivos de texto (*.txt *.log *.csv *.dat *.json *.xml *.sql "
 #: na tabela de pecas levaria muito tempo com a interface parada; o teto
 #: transforma isso num aviso em vez de num travamento.
 TETO_DE_SUBSTITUICOES = 100_000
+
+
+class _Credito(QLabel):
+    """O credito do rodape. Clicavel, porque ja' existe onde levar."""
+
+    clicado = Signal()
+
+    def __init__(self, texto: str, dica: str,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(texto, parent)
+        self.setToolTip(dica)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setStyleSheet("padding: 0 6px;")
+
+    def mousePressEvent(self, evento) -> None:            # noqa: N802 - Qt
+        if evento.button() == Qt.MouseButton.LeftButton:
+            self.clicado.emit()
+        super().mousePressEvent(evento)
 
 
 class JanelaPrincipal(QMainWindow):
@@ -75,6 +93,16 @@ class JanelaPrincipal(QMainWindow):
         for rotulo in (self.rotulo_posicao, self.rotulo_codec,
                        self.rotulo_memoria):
             self.barra.addPermanentWidget(rotulo)
+
+        # `addPermanentWidget`, e nao `addWidget`: a area dos widgets NAO
+        # permanentes e' a mesma em que `showMessage()` desenha, e um credito
+        # ali seria coberto -- ou empurrado -- a cada "Salvo: arquivo.txt".
+        self.credito = _Credito(
+            f"Produzido por {AUTOR} · v{VERSAO}",
+            f"{APP} {VERSAO}\nProduzido por {AUTOR}.\n"
+            f"Clique para ver a licenca e as versoes.", self)
+        self.credito.clicado.connect(self.sobre)
+        self.barra.addPermanentWidget(self.credito)
         self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para ca")
 
     # ==================================================================
@@ -123,6 +151,9 @@ class JanelaPrincipal(QMainWindow):
              lambda: self.barra_busca._procurar(True), localizar)
         localizar.addSeparator()
         acao("&Ir para linha...", "Ctrl+G", self.ir_para_linha, localizar)
+
+        ajuda = self.menuBar().addMenu("A&juda")
+        acao("&Sobre...", "", self.sobre, ajuda)
 
     # ==================================================================
     # Abas
@@ -189,6 +220,9 @@ class JanelaPrincipal(QMainWindow):
         aba.encerrar()
         aba.deleteLater()
         if self.abas.count() == 0:
+            # So' os campos do DOCUMENTO sao limpos. O credito fica: ele nao
+            # e' estado de arquivo nenhum, e some-lo ao fechar a ultima aba
+            # deixaria o rodape vazio sem motivo.
             self.rotulo_posicao.clear()
             self.rotulo_codec.clear()
             self.rotulo_memoria.clear()
@@ -463,6 +497,32 @@ class JanelaPrincipal(QMainWindow):
                     if p.fonte == "adicionado")
         self.rotulo_memoria.setText(f"editado: {vivos / 1024:,.1f} KB"
                                     .replace(",", "."))
+
+    # ==================================================================
+    # Sobre
+    # ==================================================================
+
+    def sobre(self) -> None:
+        """Quem fez, qual versao, e onde o log fica.
+
+        O caminho do log entra aqui de proposito: quando algo der errado, e' o
+        primeiro arquivo a pedir -- e procura-lo em `%APPDATA%` sem saber o nome
+        e' pedir demais de quem so' queria editar um texto.
+        """
+        import sys
+
+        from PySide6.QtCore import qVersion
+
+        QMessageBox.about(
+            self, f"Sobre o {APP}",
+            f"<h3>{APP} {VERSAO}</h3>"
+            f"<p>Editor de texto completo para arquivos grandes: o arquivo "
+            f"continua no disco, e so' o que voce edita ocupa memoria.</p>"
+            f"<p><b>Produzido por {AUTOR}</b><br>"
+            f"Licenca MIT</p>"
+            f"<p style='color:gray'>Python {sys.version.split()[0]} · "
+            f"Qt {qVersion()}</p>"
+            f"<p style='color:gray'>Log: {log_interno.caminho_do_log()}</p>")
 
     # ==================================================================
     # Arrastar-e-soltar

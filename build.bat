@@ -56,8 +56,35 @@ if /i "%~1"=="umarquivo" (
     set "TFEDIT_UM_ARQUIVO="
 )
 
+rem Uma instancia rodando SEGURA os arquivos de dist\ -- o rmdir apaga o que
+rem consegue e deixa o resto, e o PyInstaller falha no meio com "Acesso negado".
+rem Pior: o que sobra e um dist PELA METADE, e o .exe passa a morrer com
+rem "Failed to import encodings module". Ja aconteceu aqui; e melhor recusar.
+rem A checagem NAO usa "tasklist | find". Rodando o build sem console
+rem anexado -- de um terminal que redireciona a saida --, o find fica
+rem esperando no pipe PARA SEMPRE e o build trava sem imprimir nada.
+rem Aconteceu duas vezes aqui, e o sintoma ("parou no passo 2") nao
+rem aponta para a causa. O PowerShell devolve o resultado pelo codigo de
+rem saida, sem pipe nenhum.
+powershell -NoProfile -NonInteractive -Command "if (Get-Process TextForgeEdit -ErrorAction SilentlyContinue) { exit 1 } else { exit 0 }"
+if errorlevel 1 (
+    echo.
+    echo BUILD ABORTADO: ha um TextForgeEdit.exe em execucao.
+    echo Ele segura os arquivos de dist\ e o empacotamento falharia no meio,
+    echo deixando um dist quebrado. Feche o programa e rode de novo.
+    echo.
+    exit /b 1
+)
+
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
+
+if exist dist (
+    echo.
+    echo BUILD ABORTADO: nao foi possivel apagar dist\ por completo.
+    echo Algum programa esta com arquivos de la abertos ^(antivirus, Explorer^).
+    exit /b 1
+)
 
 "%PY%" -m PyInstaller --noconfirm --clean TextForgeEdit.spec
 if errorlevel 1 (

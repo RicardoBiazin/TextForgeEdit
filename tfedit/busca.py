@@ -215,6 +215,15 @@ def substituir_todas(documento, criterio: Criterio, codec: str,
     if not achados:
         return 0
 
+    # UM grupo para todas as trocas: sem isto, desfazer 500 substituicoes
+    # exigiria 500 Ctrl+Z, o que na pratica e' nao poder voltar atras.
+    with documento.agrupar():
+        _aplicar(documento, padrao, codec, substituto, achados, cancelar)
+    return len(achados)
+
+
+def _aplicar(documento, padrao, codec: str, substituto: str, achados,
+             cancelar) -> None:
     for achado in reversed(achados):
         if cancelar is not None and cancelar():
             break
@@ -225,4 +234,3 @@ def substituir_todas(documento, criterio: Criterio, codec: str,
         novo = padrao.sub(substituto, achado.texto[achado.inicio:achado.fim],
                           count=1).encode(codec, errors="replace")
         documento.substituir(base + len(prefixo), len(alvo), novo)
-    return len(achados)

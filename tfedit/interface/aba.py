@@ -63,6 +63,7 @@ class Aba(QWidget):
         self.editor = EditorDeslizante(self.janela, self)
         self.editor.posicao_mudou.connect(self.posicao_mudou)
         self.editor.sujou.connect(self.titulo_mudou)
+        self.editor.conteudo_voltou.connect(self.titulo_mudou)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

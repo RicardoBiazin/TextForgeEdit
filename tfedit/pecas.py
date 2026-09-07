@@ -31,6 +31,7 @@ que o cursor esta'.
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 
 from tfedit.original import Original
@@ -82,6 +83,10 @@ class Edicao:
     offset: int
     removido: bytes = b""     # o que saiu do documento
     inserido: bytes = b""     # o que entrou
+    #: Edicoes do mesmo grupo sao desfeitas JUNTAS. E' o que faz "substituir
+    #: todas" caber num Ctrl+Z: sem isto, trocar 500 ocorrencias exigiria 500
+    #: Ctrl+Z para voltar atras, o que na pratica e' nao poder voltar.
+    grupo: int = 0
     #: Edicoes de digitacao seguida sao FUNDIDAS numa so' (ver `_fundir`), para
     #: um Ctrl+Z desfazer a palavra e nao a letra.
     aberta: bool = False
@@ -101,6 +106,9 @@ class Documento:
         #: (indice da peca, offset em que ela comeca) da ultima busca. Ver o
         #: terceiro paragrafo do cabecalho.
         self._cursor: tuple[int, int] | None = None
+        #: Contador de grupos de desfazer. 0 = fora de grupo.
+        self._grupo = 0
+        self._proximo_grupo = 0
 
         if original.tamanho:
             self._pecas.append(Peca(ORIGINAL, 0, original.tamanho,
@@ -379,7 +387,26 @@ class Documento:
         self._cursor = None
         return removidos
 
+    @contextlib.contextmanager
+    def agrupar(self):
+        """Tudo o que for editado aqui dentro se desfaz com UM Ctrl+Z.
+
+        Usado por "substituir todas" (ver `busca.py`). Grupos nao aninham: um
+        `agrupar` dentro de outro continua no grupo de fora, que e' o
+        comportamento util -- quem chama nao precisa saber se ja' esta' num.
+        """
+        if self._grupo:
+            yield self._grupo
+            return
+        self._proximo_grupo += 1
+        self._grupo = self._proximo_grupo
+        try:
+            yield self._grupo
+        finally:
+            self._grupo = 0
+
     def _registrar(self, edicao: Edicao) -> None:
+        edicao.grupo = self._grupo
         self._feitas.append(edicao)
         # Uma edicao nova invalida o que havia para refazer: manter a lista
         # produziria um "refazer" que costura dois futuros diferentes.
@@ -456,28 +483,51 @@ class Documento:
     def pode_refazer(self) -> bool:
         return bool(self._desfeitas)
 
-    def desfazer(self) -> int:
-        """Desfaz a ultima edicao. Devolve o offset onde por o cursor."""
-        if not self._feitas:
-            return -1
-        edicao = self._feitas.pop()
+    def _reverter(self, edicao: Edicao) -> None:
         if edicao.inserido:
             self._aplicar_remocao(edicao.offset, len(edicao.inserido))
         if edicao.removido:
             self._aplicar_insercao(edicao.offset, edicao.removido)
-        self._desfeitas.append(edicao)
-        return edicao.offset
 
-    def refazer(self) -> int:
-        """Refaz a ultima operacao desfeita. Devolve o offset do cursor."""
-        if not self._desfeitas:
-            return -1
-        edicao = self._desfeitas.pop()
+    def _reaplicar(self, edicao: Edicao) -> None:
         if edicao.removido:
             self._aplicar_remocao(edicao.offset, len(edicao.removido))
         if edicao.inserido:
             self._aplicar_insercao(edicao.offset, edicao.inserido)
+
+    def desfazer(self) -> int:
+        """Desfaz a ultima edicao -- ou o GRUPO inteiro. Devolve o offset."""
+        if not self._feitas:
+            return -1
+        edicao = self._feitas.pop()
+        self._reverter(edicao)
+        self._desfeitas.append(edicao)
+        # Um grupo se desfaz por inteiro: as edicoes saem na ordem inversa da
+        # aplicacao, que e' exatamente a ordem em que estao na pilha.
+        while (edicao.grupo and self._feitas
+               and self._feitas[-1].grupo == edicao.grupo):
+            outra = self._feitas.pop()
+            self._reverter(outra)
+            self._desfeitas.append(outra)
+            edicao = outra
+        return edicao.offset
+
+    def refazer(self) -> int:
+        """Refaz a ultima operacao desfeita -- ou o grupo inteiro."""
+        if not self._desfeitas:
+            return -1
+        edicao = self._desfeitas.pop()
+        self._reaplicar(edicao)
         self._feitas.append(edicao)
+        # A pilha de desfeitas guarda o grupo na ordem INVERSA da aplicacao, e
+        # desempilhar devolve a ordem original -- que e' a unica em que refazer
+        # produz o mesmo resultado.
+        while (edicao.grupo and self._desfeitas
+               and self._desfeitas[-1].grupo == edicao.grupo):
+            outra = self._desfeitas.pop()
+            self._reaplicar(outra)
+            self._feitas.append(outra)
+            edicao = outra
         return edicao.offset
 
     def confirmar_gravacao(self, original: Original) -> None:
@@ -497,6 +547,7 @@ class Documento:
         self._linhas = max(0, original.total_de_linhas - 1)
         self._feitas.clear()
         self._desfeitas.clear()
+        self._grupo = 0
         self._cursor = None
 
     # ==================================================================

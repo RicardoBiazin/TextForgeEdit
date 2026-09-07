@@ -88,8 +88,22 @@ A escrita de volta é **mínima**: o prefixo e o sufixo iguais são descartados,
 só o miolo que mudou entra na tabela. Sem isso, cada deslize com uma vírgula
 corrigida injetaria a fatia inteira — centenas de KB para representar um byte.
 
-**Limitação conhecida:** desfazer vale dentro da fatia. Ao deslizar, o que foi
-editado é consolidado e a pilha do Qt recomeça.
+## Desfazer, em dois níveis
+
+`Ctrl+Z` consulta **duas** pilhas, nesta ordem:
+
+1. a do Qt, que cobre o que você digitou na fatia agora;
+2. a da tabela de peças, que cobre o que já foi consolidado — inclusive
+   `Substituir todas`.
+
+Uma substituição em massa cabe num **único** `Ctrl+Z`: as trocas entram como um
+grupo, e desfazer processa o grupo inteiro. Sem isso, voltar atrás de 500
+substituições exigiria 500 `Ctrl+Z`, o que na prática é não poder voltar.
+
+**Limitação que resta:** ao deslizar a fatia, o que foi editado é consolidado na
+tabela e a pilha do Qt recomeça. O desfazer continua funcionando (pela tabela),
+mas a granularidade fica mais grossa — um `Ctrl+Z` desfaz a consolidação inteira
+daquele trecho, e não a última tecla.
 
 ## O que já dá para fazer
 

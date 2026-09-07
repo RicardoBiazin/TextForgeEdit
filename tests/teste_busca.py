@@ -179,6 +179,44 @@ def testar_substituir_todas() -> None:
                     0, "o que nao existe nao troca nada")
 
 
+def testar_desfazer_substituir_todas() -> None:
+    secao("Substituir todas cabe num Ctrl+Z")
+
+    with pasta_temporaria() as tmp:
+        doc = abrir(tmp, "grupo.txt", TEXTO)
+        antes = doc.ler(0, doc.tamanho)
+
+        quantas = substituir_todas(doc, Criterio("alvo"), "utf-8", "MIRA")
+        checa_igual(quantas, 4, "trocou as quatro")
+        depois = doc.ler(0, doc.tamanho)
+        checa(depois != antes, "o documento mudou")
+
+        # DEFEITO CORRIGIDO. Antes, cada troca era uma edicao independente:
+        # desfazer 500 substituicoes exigiria 500 Ctrl+Z, o que na pratica e'
+        # nao poder voltar atras.
+        doc.desfazer()
+        checa_igual(doc.ler(0, doc.tamanho), antes,
+                    "*** UM desfazer devolve TODAS as substituicoes ***")
+        checa(not doc.alterado,
+              "e o documento volta a nao ter alteracao pendente")
+
+        doc.refazer()
+        checa_igual(doc.ler(0, doc.tamanho), depois,
+                    "*** e UM refazer reaplica todas, na ordem certa ***")
+
+        # Uma edicao solta ANTES do grupo nao pode ser engolida por ele.
+        doc = abrir(tmp, "misto.txt", TEXTO)
+        doc.inserir(0, b"CABECALHO\n")
+        com_cabecalho = doc.ler(0, doc.tamanho)
+        substituir_todas(doc, Criterio("alvo"), "utf-8", "MIRA")
+        doc.desfazer()
+        checa_igual(doc.ler(0, doc.tamanho), com_cabecalho,
+                    "*** desfazer o grupo NAO desfaz a edicao anterior a ele ***")
+        doc.desfazer()
+        checa(b"CABECALHO" not in doc.ler(0, doc.tamanho),
+              "e o segundo desfazer tira o cabecalho")
+
+
 def testar_acentos_e_codec() -> None:
     secao("Acentos e codificacao")
 
@@ -228,6 +266,7 @@ def main() -> int:
     testar_proxima_e_volta()
     testar_enxerga_o_digitado()
     testar_substituir_todas()
+    testar_desfazer_substituir_todas()
     testar_acentos_e_codec()
     testar_arquivo_grande()
     return resumir()

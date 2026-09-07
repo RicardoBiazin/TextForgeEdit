@@ -9,10 +9,11 @@ de que ele contem o arquivo inteiro:
   * rolar ou mover o cursor para perto da borda DESLIZA a fatia;
   * o numero de linha mostrado e' o do documento, nao o da fatia.
 
-O que fica de fora, e esta' declarado na interface para ninguem descobrir sozinho:
-desfazer vale DENTRO da fatia. Ao deslizar, o que foi editado e' consolidado na
-tabela de pecas e a pilha do Qt recomeca. Costurar as duas pilhas exigiria
-reimplementar o desfazer do Qt -- exatamente o que esta arquitetura evita.
+DESFAZER TEM DOIS NIVEIS, e o motivo esta' em `undo()`: a pilha do Qt cobre o
+que foi digitado na fatia agora, e a da tabela de pecas cobre o que ja' foi
+consolidado. Consultar so' a do Qt fazia o Ctrl+Z nao ter efeito nenhum depois
+de "Substituir todas" -- `recarregar()` limpa a pilha do Qt, e as edicoes
+ficavam na tabela sem ninguem consulta-las.
 """
 
 from __future__ import annotations
@@ -46,6 +47,9 @@ class EditorDeslizante(QPlainTextEdit):
     posicao_mudou = Signal(int, int)
     #: O documento passou a ter alteracoes pendentes.
     sujou = Signal()
+    #: Desfazer ou refazer mexeu na tabela de pecas -- o titulo e a barra de
+    #: status precisam ser refeitos, e o texto na tela ja' e' outro.
+    conteudo_voltou = Signal()
 
     def __init__(self, janela: JanelaViva, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -104,6 +108,53 @@ class EditorDeslizante(QPlainTextEdit):
         mudou = self.janela.aplicar(self.toPlainText())
         self.document().setModified(False)
         return mudou
+
+    # ==================================================================
+    # Desfazer em DOIS niveis
+    # ==================================================================
+
+    def undo(self) -> None:                               # noqa: N802 - Qt
+        """Ctrl+Z: primeiro a pilha do Qt, depois a da tabela de pecas.
+
+        DEFEITO CORRIGIDO. "Substituir todas" mexe direto na tabela e recarrega
+        a fatia -- e recarregar chama `clearUndoRedoStacks()`, entao a pilha do
+        Qt fica vazia e o Ctrl+Z nao fazia NADA. As edicoes estavam registradas
+        na tabela o tempo todo; ninguem as consultava.
+
+        A ordem "Qt primeiro" e' a certa: a pilha do Qt cobre o que foi digitado
+        na fatia AGORA, que e' sempre mais recente que o que ja' foi
+        consolidado na tabela.
+        """
+        if self.document().isUndoAvailable():
+            super().undo()
+            return
+        self._desfazer_na_tabela(refazer=False)
+
+    def redo(self) -> None:                               # noqa: N802 - Qt
+        if self.document().isRedoAvailable():
+            super().redo()
+            return
+        self._desfazer_na_tabela(refazer=True)
+
+    @property
+    def pode_desfazer(self) -> bool:
+        return (self.document().isUndoAvailable()
+                or self.janela.documento.pode_desfazer)
+
+    def _desfazer_na_tabela(self, refazer: bool) -> None:
+        documento = self.janela.documento
+        if refazer and not documento.pode_refazer:
+            return
+        if not refazer and not documento.pode_desfazer:
+            return
+        # O que estiver digitado e nao sincronizado tem de ir para a tabela
+        # ANTES: senao ele seria descartado pelo recarregar logo abaixo.
+        self.sincronizar()
+        offset = documento.refazer() if refazer else documento.desfazer()
+        linha = (documento.linha_do_offset(offset) if offset >= 0
+                 else self.linha_atual_no_documento())
+        self.recarregar(linha)
+        self.conteudo_voltou.emit()
 
     def linha_atual_no_documento(self) -> int:
         return self.janela.linha_no_documento(self.textCursor().blockNumber())

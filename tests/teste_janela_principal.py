@@ -233,6 +233,60 @@ def testar_busca_pela_interface() -> None:
         encerrar(janela)
 
 
+def testar_desfazer_apos_substituir() -> None:
+    secao("Ctrl+Z depois de substituir")
+
+    from tfedit import busca
+    from tfedit.busca import Criterio
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo = tmp / "undo.txt"
+        alvo.write_bytes(b"um alvo aqui\ndois alvo la\ntres alvo ali\n")
+        antes = alvo.read_bytes()
+
+        janela = JanelaPrincipal()
+        janela.abrir_arquivo(str(alvo))
+        esperar_indice(janela)
+        aba = janela.aba_atual
+
+        def conteudo():
+            aba.editor.sincronizar()
+            return aba.documento.ler(0, aba.documento.tamanho)
+
+        # "Substituir todas" mexe direto na tabela de pecas e RECARREGA a fatia
+        # -- e recarregar limpa a pilha do Qt. Era assim que o Ctrl+Z deixava de
+        # funcionar: as edicoes existiam na tabela, e ninguem as consultava.
+        busca.substituir_todas(aba.documento, Criterio("alvo"),
+                               aba.perfil.codec, "MIRA")
+        aba.editor.recarregar(aba.editor.linha_atual_no_documento())
+        checa(b"MIRA" in conteudo(), "as trocas entraram")
+        checa(not aba.editor.document().isUndoAvailable(),
+              "a pilha do Qt esta' vazia depois do recarregar")
+        checa(aba.editor.pode_desfazer,
+              "*** mas o editor sabe que HA' o que desfazer: ele olha as duas "
+              "pilhas ***")
+
+        aba.editor.undo()
+        checa_igual(conteudo(), antes,
+                    "*** UM Ctrl+Z devolve o arquivo ao original ***")
+        aba.editor.redo()
+        checa(b"MIRA" in conteudo(), "e Ctrl+Y reaplica")
+
+        # Digitar depois disso continua indo pela pilha do Qt, que e' a mais
+        # recente e tem de ser consultada primeiro.
+        aba.editor.undo()
+        aba.editor.ir_para_linha(0)
+        aba.editor.insertPlainText("XYZ ")
+        checa(aba.editor.document().isUndoAvailable(),
+              "digitar volta a alimentar a pilha do Qt")
+        aba.editor.undo()
+        checa("XYZ" not in aba.editor.toPlainText(),
+              "*** e o Ctrl+Z desfaz a digitacao PRIMEIRO, por ser a mais "
+              "recente ***")
+        encerrar(janela)
+
+
 def testar_arrastar_e_soltar() -> None:
     secao("Arrastar-e-soltar")
 
@@ -292,6 +346,50 @@ def testar_codificacoes_lado_a_lado() -> None:
         encerrar(janela)
 
 
+def testar_credito_no_rodape() -> None:
+    secao("Produzido por e versao, no rodape")
+
+    from tfedit import APP, AUTOR, VERSAO
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        janela = JanelaPrincipal()
+
+        texto = janela.credito.text()
+        checa(AUTOR in texto, f"o rodape traz o autor: {texto!r}")
+        checa(VERSAO in texto, "e a versao")
+        checa("Produzido por" in texto, "com o rotulo pedido")
+
+        dica = janela.credito.toolTip()
+        checa(APP in dica and VERSAO in dica, "a dica repete nome e versao")
+
+        # `addPermanentWidget`, e nao `addWidget`: os widgets NAO permanentes
+        # dividem espaco com o `showMessage`, e o credito seria coberto ou
+        # empurrado a cada "Salvo: arquivo.txt".
+        janela.barra.showMessage("uma mensagem temporaria bem longa " * 3)
+        checa_igual(janela.credito.text(), texto,
+                    "*** e uma mensagem temporaria nao o apaga nem o troca ***")
+        janela.barra.clearMessage()
+
+        # Nem e' estado de documento: abrir e fechar a ultima aba deixa os
+        # campos do arquivo vazios, e o credito continua.
+        alvo = gerar(tmp, "credito.txt", 200)
+        janela.abrir_arquivo(str(alvo))
+        esperar_indice(janela)
+        checa(janela.rotulo_posicao.text() != "", "com arquivo aberto ha' posicao")
+        janela.fechar_aba(0)
+        checa_igual(janela.rotulo_posicao.text(), "",
+                    "fechar a ultima aba limpa os campos do documento")
+        checa_igual(janela.credito.text(), texto,
+                    "*** mas NAO o credito: ele nao e' estado de arquivo "
+                    "nenhum ***")
+
+        checa(any(a.text().replace("&", "") == "Ajuda"
+                  for a in janela.menuBar().actions()),
+              "e existe o menu Ajuda, com o Sobre")
+        encerrar(janela)
+
+
 def testar_log() -> None:
     secao("O log")
 
@@ -333,8 +431,10 @@ def main() -> int:
     testar_salvar_como()
     testar_salvar_sem_edicao()
     testar_busca_pela_interface()
+    testar_desfazer_apos_substituir()
     testar_arrastar_e_soltar()
     testar_codificacoes_lado_a_lado()
+    testar_credito_no_rodape()
     testar_log()
     return resumir()
 
