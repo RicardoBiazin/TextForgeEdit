@@ -11,11 +11,12 @@ import pathlib
 
 from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox,
-                               QStatusBar)
+                               QProgressBar, QStatusBar)
 
 from tfedit import VERSAO, codificacao
 from tfedit.gravacao import FalhaNaTroca, SemEspaco, gravar
 from tfedit.interface.editor import EditorDeslizante
+from tfedit.interface.indexador import PARTIDA, Indexador
 from tfedit.janela import JanelaViva
 from tfedit.original import Original
 from tfedit.pecas import Documento
@@ -31,6 +32,7 @@ class JanelaPrincipal(QMainWindow):
         self.original: Original | None = None
         self.documento: Documento | None = None
         self.editor: EditorDeslizante | None = None
+        self.indexador: Indexador | None = None
 
         self.setWindowTitle(f"TextForgeEdit {VERSAO}")
         self.resize(1100, 760)
@@ -41,6 +43,11 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_posicao = QLabel("", self)
         self.rotulo_codec = QLabel("", self)
         self.rotulo_memoria = QLabel("", self)
+        self.progresso = QProgressBar(self)
+        self.progresso.setMaximumWidth(160)
+        self.progresso.setTextVisible(False)
+        self.progresso.hide()
+        self.barra.addPermanentWidget(self.progresso)
         for rotulo in (self.rotulo_posicao, self.rotulo_codec,
                        self.rotulo_memoria):
             self.barra.addPermanentWidget(rotulo)
@@ -84,12 +91,10 @@ class JanelaPrincipal(QMainWindow):
             return False
 
         perfil = codificacao.detectar(original.ler(0, codificacao.SONDAGEM))
-        # A varredura e' sincrona nesta etapa: 240 MB levam ~1 s. Passar para
-        # uma thread com progresso e' a proxima melhoria obvia, e a estrutura
-        # ja' aceita (`indexar` e' incremental por design).
-        self.barra.showMessage(f"Indexando {alvo.name}...")
-        self.repaint()
-        original.indexar()
+        # Um primeiro pedaco SINCRONO, so' o bastante para a fatia inicial
+        # existir -- alguns milissegundos. Sem ele a janela abriria vazia e so'
+        # encheria no primeiro sinal de progresso.
+        original.indexar(PARTIDA)
 
         self._fechar_atual()
         self.caminho = alvo
@@ -101,16 +106,66 @@ class JanelaPrincipal(QMainWindow):
         self.editor.sujou.connect(self._mostrar_titulo)
         self.setCentralWidget(self.editor)
 
-        mb = original.tamanho / (1024 * 1024)
         self.rotulo_codec.setText(f"{perfil.rotulo}  {perfil.rotulo_eol}")
-        self.barra.showMessage(
-            f"{alvo.name}: {mb:,.1f} MB, {original.total_de_linhas:,} linhas. "
-            f"O arquivo continua no disco.".replace(",", "."), 8000)
         self._mostrar_titulo()
         self._mostrar_posicao(0, 0)
+
+        if original.indexacao_completa:
+            self._ao_terminar_indice(original.total_de_linhas)
+        else:
+            # Ler ja'; editar quando a varredura acabar. Editar antes daria
+            # contagens de linha erradas -- ver `Documento.pode_editar`.
+            self.editor.setReadOnly(True)
+            self.progresso.setRange(0, 100)
+            self.progresso.setValue(0)
+            self.progresso.show()
+            self.barra.showMessage(
+                f"{alvo.name}: indexando... da' para ler e rolar; editar libera "
+                f"no fim.")
+            self.indexador = Indexador(original, self)
+            self.indexador.progresso.connect(self._ao_indexar)
+            self.indexador.concluido.connect(self._ao_terminar_indice)
+            self.indexador.falhou.connect(self._ao_falhar_indice)
+            self.indexador.start()
         return True
 
+    # ==================================================================
+    # Indexacao
+    # ==================================================================
+
+    def _ao_indexar(self, varrido: int, total: int) -> None:
+        self.progresso.setValue(varrido * 100 // max(1, total))
+        if self.editor is not None:
+            # A barra de rolagem e a margem seguem a contagem, que cresce.
+            self.editor._ajustar_margem()
+        self._mostrar_posicao(self.editor.linha_atual_no_documento()
+                              if self.editor else 0, 0)
+
+    def _ao_terminar_indice(self, total_de_linhas: int) -> None:
+        self.progresso.hide()
+        if self.editor is not None:
+            self.editor.setReadOnly(False)
+            self.editor._ajustar_margem()
+        mb = (self.original.tamanho / (1024 * 1024)) if self.original else 0
+        nome = self.caminho.name if self.caminho else ""
+        self.barra.showMessage(
+            f"{nome}: {mb:,.1f} MB, {total_de_linhas:,} linhas. "
+            f"O arquivo continua no disco.".replace(",", "."), 8000)
+
+    def _ao_falhar_indice(self, erro: str) -> None:
+        self.progresso.hide()
+        self.barra.showMessage(f"A indexacao falhou: {erro}. O arquivo segue "
+                               f"legivel ate' onde foi varrido.", 10000)
+
     def _fechar_atual(self) -> None:
+        """Para a varredura e SO' ENTAO fecha o mmap.
+
+        A ordem importa: fechar o mmap com o worker lendo dele levanta na thread
+        de disco. `parar()` espera a thread sair.
+        """
+        if self.indexador is not None:
+            self.indexador.parar()
+            self.indexador = None
         if self.original is not None:
             self.original.fechar()
         self.original = None
@@ -122,6 +177,13 @@ class JanelaPrincipal(QMainWindow):
 
     def salvar(self) -> bool:
         if self.editor is None or self.documento is None or self.caminho is None:
+            return False
+        if not self.documento.pode_editar:
+            QMessageBox.information(
+                self, "Ainda indexando",
+                "A varredura do arquivo nao terminou. Salvar agora gravaria "
+                "so' a parte ja' conhecida.<br><br>Espere a barra de progresso "
+                "sumir.")
             return False
         self.editor.sincronizar()
         if not self.documento.alterado:
@@ -143,6 +205,10 @@ class JanelaPrincipal(QMainWindow):
         # das pecas apontavam para ele. Reabrir e reindexar antes de qualquer
         # leitura e' obrigatorio -- ver `Documento.confirmar_gravacao`.
         novo = Original(self.caminho)
+        # Sincrono aqui de proposito: o documento acabou de ser gravado e
+        # qualquer leitura seguinte precisa do indice inteiro. O custo e' o
+        # mesmo memchr da abertura, e ele vem depois da escrita, que e' muito
+        # mais cara.
         novo.indexar()
         self.original = novo
         self.documento.confirmar_gravacao(novo)

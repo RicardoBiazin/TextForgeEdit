@@ -24,6 +24,30 @@ from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
 TEM_QT = preparar_qt()
 
 
+def esperar_indice(janela, limite_s: float = 60.0) -> bool:
+    """Segura ate' a varredura em thread terminar.
+
+    A abertura passou a ser ASSINCRONA: `abrir_arquivo` devolve com o arquivo
+    ja' legivel, mas com a contagem de linhas ainda crescendo. Um teste que
+    conferisse o total logo depois de abrir mediria o meio da varredura -- e foi
+    exatamente o que aconteceu quando a thread entrou.
+    """
+    import time
+
+    from PySide6.QtWidgets import QApplication
+
+    limite = time.monotonic() + limite_s
+    while time.monotonic() < limite:
+        QApplication.processEvents()
+        if janela.original is None or janela.original.indexacao_completa:
+            if janela.indexador is not None:
+                janela.indexador.wait(5_000)
+            QApplication.processEvents()
+            return True
+        time.sleep(0.01)
+    return False
+
+
 def gerar(pasta, nome: str, linhas: int, eol: bytes = b"\r\n"):
     alvo = pasta / nome
     with open(alvo, "wb", buffering=1024 * 1024) as f:
@@ -49,6 +73,12 @@ def testar_ponta_a_ponta() -> None:
         janela = JanelaPrincipal()
         checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
         editor = janela.editor
+        checa(editor.isReadOnly() or janela.original.indexacao_completa,
+              "*** enquanto indexa, o editor fica somente leitura: editar "
+              "antes daria contagem de linha errada ***")
+        checa(esperar_indice(janela), "a varredura em thread termina")
+        checa(not editor.isReadOnly(),
+              "e ai' a edicao libera")
         checa_igual(janela.documento.total_de_linhas, LINHAS + 1,
                     "o total de linhas bate")
 
@@ -121,6 +151,7 @@ def testar_sem_edicao_nao_grava() -> None:
 
         janela = JanelaPrincipal()
         janela.abrir_arquivo(str(alvo))
+        esperar_indice(janela)
         editor = janela.editor
         for linha in (0, 20_000, 5_000, 29_000, 0):
             editor.ir_para_linha(linha)
@@ -143,6 +174,7 @@ def testar_margem_e_posicao() -> None:
         alvo = gerar(tmp, "margem.txt", 100_000)
         janela = JanelaPrincipal()
         janela.abrir_arquivo(str(alvo))
+        esperar_indice(janela)
         editor = janela.editor
 
         editor.ir_para_linha(60_000)
