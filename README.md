@@ -43,17 +43,50 @@ o byte — e é isso que permite o cursor andar caractere a caractere.
 
 ## Estado
 
-Núcleo pronto e testado; interface ainda não.
+Já dá para abrir, digitar e salvar:
+
+```bat
+.venv\Scripts\python.exe app.py caminho\dorquivo.txt
+```
 
 | Parte | Situação |
 |---|---|
 | `tfedit/original.py` — mmap + índice esparso incremental | pronto |
 | `tfedit/pecas.py` — tabela de peças, desfazer, fusão de digitação | pronto |
 | `tfedit/gravacao.py` — gravação por streaming, troca atômica | pronto |
-| Interface | a definir |
+| `tfedit/codificacao.py` — cascata de detecção, fim de linha | pronto |
+| `tfedit/janela.py` — a janela viva e a escrita de volta mínima | pronto |
+| `tfedit/interface/` — editor deslizante e janela principal | mínimo usável |
+| Abas, pesquisa, sessão, empacotamento | não começou |
 
-**Medido** (arquivo de 33 MB, 800 mil linhas): 3 mil edições custam menos de
-2 MB de RAM; gravar tem pico de poucos MB.
+**Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
+começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
+memória. O  segura 5.001 blocos — a fatia —, e não as 400.001
+linhas. Gravar preserva o CRLF das 400.000 linhas e deixa intactas as que não
+foram tocadas.
+
+## A janela viva
+
+O editor é um `QPlainTextEdit` **de verdade** segurando apenas uma fatia:
+
+```
+arquivo de 1 GB
+ │
+ ├─ linhas 0 .. 1.199.999          na tabela de peças, no disco
+ ├─ linhas 1.200.000 .. 1.205.000  ← JANELA VIVA, num QTextDocument real
+ └─ linhas 1.205.001 .. fim        na tabela de peças, no disco
+```
+
+Rolar para fora faz a fatia **deslizar**: o que estava vivo volta para a tabela
+de peças e uma fatia nova é carregada. Dentro dela funciona tudo o que o Qt sabe
+fazer — caret, acentuação com tecla morta, seleção, clipboard, arrastar.
+
+A escrita de volta é **mínima**: o prefixo e o sufixo iguais são descartados, e
+só o miolo que mudou entra na tabela. Sem isso, cada deslize com uma vírgula
+corrigida injetaria a fatia inteira — centenas de KB para representar um byte.
+
+**Limitação conhecida:** desfazer vale dentro da fatia. Ao deslizar, o que foi
+editado é consolidado e a pilha do Qt recomeça.
 
 ## Decisões já tomadas, e o porquê
 
