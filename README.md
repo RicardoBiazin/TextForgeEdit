@@ -46,7 +46,7 @@ o byte — e é isso que permite o cursor andar caractere a caractere.
 Já dá para abrir, digitar e salvar:
 
 ```bat
-.venv\Scripts\python.exe app.py caminho\dorquivo.txt
+.venv\Scripts\python.exe app.py caminho\do\arquivo.txt
 ```
 
 | Parte | Situação |
@@ -61,7 +61,7 @@ Já dá para abrir, digitar e salvar:
 
 **Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
 começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
-memória. O  segura 5.001 blocos — a fatia —, e não as 400.001
+memória. O `QPlainTextEdit` segura 5.001 blocos — a fatia —, e não as 400.001
 linhas. Gravar preserva o CRLF das 400.000 linhas e deixa intactas as que não
 foram tocadas.
 
