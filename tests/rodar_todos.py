@@ -24,6 +24,7 @@ LIMITE_POR_SUITE_S = 180
 LIMITE_PROPRIO_S: dict[str, int] = {
     # Gera dezenas de MB em %TEMP% e mede memoria.
     "teste_pecas.py": 600,
+    "teste_janela_principal.py": 400,
 }
 
 SUITES = [
@@ -33,6 +34,10 @@ SUITES = [
      "deteccao de codificacao, janela viva, escrita de volta minima"),
     ("teste_editor.py",
      "ponta a ponta: abrir, digitar com acento, deslizar, gravar"),
+    ("teste_busca.py",
+     "localizar e substituir no documento inteiro, fora da fatia"),
+    ("teste_janela_principal.py",
+     "abas, salvar como, arrastar-e-soltar, busca pela barra, log"),
 ]
 
 

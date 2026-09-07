@@ -34,6 +34,12 @@ estão proibidos no pacote.
 | `original.py` | O índice é **esparso** (`PASSO`). Guardar o offset de cada linha de 13 milhões custaria ~100 MB só de lista Python. |
 | `gravacao.py` | A ordem no Windows: escrever o temporário com o mmap **aberto** → fechar o mmap → trocar → reabrir. Fechar antes grava arquivo vazio; deixar aberto faz a troca falhar com acesso negado. As duas falhas já aconteceram no TextForge. |
 | `gravacao.py` | `ReplaceFileW` antes de `os.replace`: o segundo perde ACEs explícitas e fluxos alternativos do original. E o temporário nasce **na mesma pasta** — `os.replace` entre volumes falha. |
+| `busca.py` | `substituir_todas` aplica de **trás para a frente**. Do começo, cada troca desloca os offsets do que vem depois e a segunda substituição cai no lugar errado — o defeito só aparece quando o substituto tem tamanho diferente do procurado. |
+| `busca.py` | A busca **decodifica linha a linha** em vez de comparar bytes. Procurar em bytes é mais rápido e erra "diferenciar maiúsculas" fora do ASCII: `Ç` e `ç` são pares diferentes em cada codificação. Num editor em português isso não é detalhe. |
+| `busca.py` | "Próxima ocorrência" para na **primeira** e não varre o arquivo inteiro. Só `contar` e `substituir_todas` percorrem tudo, e as duas têm teto declarado. |
+| `interface/aba.py` | Uma aba por **arquivo**, comparado por caminho resolvido em caixa baixa. No Windows o mesmo arquivo chega com caixa diferente pelo Explorer, pela forma curta 8.3 e por caminho relativo — duas abas do mesmo arquivo produzem duas versões divergentes. |
+| `interface/janela_principal.py` | Salvar sem edição pendente é **no-op**. Regravar 240 MB à toa custa minutos e mexe na data do arquivo, fazendo backup e sincronizador acharem que houve mudança. |
+| testes de interface | Nunca terminar com `janela.close()` numa aba modificada: abre um `QMessageBox` modal, e em modo offscreen não há quem o feche — a suíte trava para sempre. Use o helper `encerrar()`. E `isHidden()` em vez de `isVisible()`: num teste a janela de topo nunca é exibida, e todo filho dela é "invisível". |
 | `gravacao.py` | Espaço em disco é conferido **antes** do primeiro byte. Descobrir que faltou disco depois de escrever 200 MB é o pior momento possível. |
 
 ## Ao acrescentar um recurso

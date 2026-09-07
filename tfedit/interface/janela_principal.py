@@ -1,41 +1,65 @@
-"""A janela: abrir, editar, salvar. O minimo para o editor ser usavel.
+"""A janela: abas, abrir, salvar, salvar como, localizar e arrastar-e-soltar.
 
-Deliberadamente pequeno nesta etapa. O que existe aqui e' o que prova a
-arquitetura de ponta a ponta -- abrir um arquivo grande, digitar dentro dele e
-gravar sem carregar nada. Menu completo, pesquisa, abas e sessao vem depois.
+Ela conduz ABAS, e nao arquivos: tudo o que um arquivo aberto precisa mora na
+`Aba` (ver `interface/aba.py`). E' o que faz "varias abas" ser uma lista em vez
+de uma reescrita.
 """
 
 from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QKeySequence, QTextCursor
 from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox,
-                               QProgressBar, QStatusBar)
+                               QProgressBar, QStatusBar, QTabWidget, QVBoxLayout,
+                               QWidget)
 
-from tfedit import VERSAO, codificacao
-from tfedit.gravacao import FalhaNaTroca, SemEspaco, gravar
-from tfedit.interface.editor import EditorDeslizante
-from tfedit.interface.indexador import PARTIDA, Indexador
-from tfedit.janela import JanelaViva
-from tfedit.original import Original
-from tfedit.pecas import Documento
+from tfedit import VERSAO, busca, log_interno
+from tfedit.gravacao import FalhaNaTroca, SemEspaco
+from tfedit.interface.aba import Aba
+from tfedit.interface.barra_busca import BarraDeBusca
+
+log = log_interno.obter(__name__)
 
 FILTRO = ("Arquivos de texto (*.txt *.log *.csv *.dat *.json *.xml *.sql "
           "*.md);;Todos os arquivos (*)")
+
+#: Teto de substituicoes de uma vez. Trocar 3 milhoes de ocorrencias uma a uma
+#: na tabela de pecas levaria muito tempo com a interface parada; o teto
+#: transforma isso num aviso em vez de num travamento.
+TETO_DE_SUBSTITUICOES = 100_000
 
 
 class JanelaPrincipal(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.caminho: pathlib.Path | None = None
-        self.original: Original | None = None
-        self.documento: Documento | None = None
-        self.editor: EditorDeslizante | None = None
-        self.indexador: Indexador | None = None
-
         self.setWindowTitle(f"TextForgeEdit {VERSAO}")
-        self.resize(1100, 760)
+        self.resize(1150, 780)
+        self.setAcceptDrops(True)          # arrastar-e-soltar (ver dropEvent)
+
+        self.abas = QTabWidget(self)
+        self.abas.setTabsClosable(True)
+        self.abas.setMovable(True)
+        self.abas.setDocumentMode(True)
+        self.abas.tabCloseRequested.connect(self.fechar_aba)
+        self.abas.currentChanged.connect(self._ao_trocar_de_aba)
+
+        self.barra_busca = BarraDeBusca(self)
+        self.barra_busca.hide()
+        self.barra_busca.procurar.connect(self._procurar)
+        self.barra_busca.substituir_atual.connect(self._substituir_atual)
+        self.barra_busca.substituir_todas.connect(self._substituir_todas)
+        self.barra_busca.fechada.connect(self._focar_editor)
+
+        central = QWidget(self)
+        pilha = QVBoxLayout(central)
+        pilha.setContentsMargins(0, 0, 0, 0)
+        pilha.setSpacing(0)
+        pilha.addWidget(self.abas, 1)
+        pilha.addWidget(self.barra_busca)
+        self.setCentralWidget(central)
+
         self._montar_menu()
 
         self.barra = QStatusBar(self)
@@ -51,174 +75,357 @@ class JanelaPrincipal(QMainWindow):
         for rotulo in (self.rotulo_posicao, self.rotulo_codec,
                        self.rotulo_memoria):
             self.barra.addPermanentWidget(rotulo)
-        self.barra.showMessage("Abra um arquivo (Ctrl+O)")
+        self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para ca")
 
     # ==================================================================
     # Menu
     # ==================================================================
 
     def _montar_menu(self) -> None:
+        def acao(rotulo, atalho, tratador, menu):
+            item = QAction(rotulo, self)
+            if atalho:
+                item.setShortcut(atalho)
+            item.triggered.connect(tratador)
+            menu.addAction(item)
+            return item
+
         arquivo = self.menuBar().addMenu("&Arquivo")
-        for rotulo, atalho, tratador in (
-                ("&Abrir...", QKeySequence.StandardKey.Open, self.abrir),
-                ("&Salvar", QKeySequence.StandardKey.Save, self.salvar),
-                ("Sa&ir", QKeySequence.StandardKey.Quit, self.close)):
-            acao = QAction(rotulo, self)
-            acao.setShortcut(atalho)
-            acao.triggered.connect(tratador)
-            arquivo.addAction(acao)
+        acao("&Abrir...", QKeySequence.StandardKey.Open, self.abrir, arquivo)
+        acao("&Salvar", QKeySequence.StandardKey.Save, self.salvar, arquivo)
+        acao("Salvar &como...", QKeySequence.StandardKey.SaveAs,
+             self.salvar_como, arquivo)
+        acao("Salvar &tudo", "Ctrl+Shift+S", self.salvar_tudo, arquivo)
+        arquivo.addSeparator()
+        acao("&Fechar aba", QKeySequence.StandardKey.Close,
+             lambda: self.fechar_aba(self.abas.currentIndex()), arquivo)
+        acao("Sa&ir", QKeySequence.StandardKey.Quit, self.close, arquivo)
 
-        ir = QAction("&Ir para linha...", self)
-        ir.setShortcut("Ctrl+G")
-        ir.triggered.connect(self.ir_para_linha)
-        self.menuBar().addMenu("&Navegar").addAction(ir)
+        editar = self.menuBar().addMenu("&Editar")
+        acao("&Desfazer", QKeySequence.StandardKey.Undo,
+             lambda: self._no_editor("undo"), editar)
+        acao("&Refazer", QKeySequence.StandardKey.Redo,
+             lambda: self._no_editor("redo"), editar)
+        editar.addSeparator()
+        acao("Recor&tar", QKeySequence.StandardKey.Cut,
+             lambda: self._no_editor("cut"), editar)
+        acao("&Copiar", QKeySequence.StandardKey.Copy,
+             lambda: self._no_editor("copy"), editar)
+        acao("C&olar", QKeySequence.StandardKey.Paste,
+             lambda: self._no_editor("paste"), editar)
+
+        localizar = self.menuBar().addMenu("&Localizar")
+        acao("&Localizar...", QKeySequence.StandardKey.Find,
+             self.abrir_busca, localizar)
+        acao("Proxima ocorrencia", "F3",
+             lambda: self.barra_busca._procurar(False), localizar)
+        acao("Ocorrencia anterior", "Shift+F3",
+             lambda: self.barra_busca._procurar(True), localizar)
+        localizar.addSeparator()
+        acao("&Ir para linha...", "Ctrl+G", self.ir_para_linha, localizar)
 
     # ==================================================================
-    # Abrir
+    # Abas
     # ==================================================================
+
+    @property
+    def aba_atual(self) -> Aba | None:
+        widget = self.abas.currentWidget()
+        return widget if isinstance(widget, Aba) else None
+
+    def todas_as_abas(self) -> list[Aba]:
+        return [self.abas.widget(i) for i in range(self.abas.count())
+                if isinstance(self.abas.widget(i), Aba)]
 
     def abrir(self) -> None:
-        caminho, _ = QFileDialog.getOpenFileName(self, "Abrir", "", FILTRO)
-        if caminho:
+        caminhos, _ = QFileDialog.getOpenFileNames(self, "Abrir", "", FILTRO)
+        for caminho in caminhos:
             self.abrir_arquivo(caminho)
 
     def abrir_arquivo(self, caminho: str) -> bool:
-        alvo = pathlib.Path(caminho)
+        # Uma aba por ARQUIVO: duas abas do mesmo arquivo produziriam duas
+        # versoes divergentes, e uma se perderia no primeiro salvamento.
+        chave = Aba.chave_de(caminho)
+        for indice, aba in enumerate(self.todas_as_abas()):
+            if aba.chave() == chave:
+                self.abas.setCurrentIndex(indice)
+                self.barra.showMessage(f"{aba.nome} ja' estava aberto", 4000)
+                return True
+
         try:
-            original = Original(alvo)
+            aba = Aba(caminho, self)
         except OSError as exc:
+            log.warning("nao foi possivel abrir %s: %s", caminho, exc)
             QMessageBox.warning(self, "Nao foi possivel abrir", str(exc))
             return False
 
-        perfil = codificacao.detectar(original.ler(0, codificacao.SONDAGEM))
-        # Um primeiro pedaco SINCRONO, so' o bastante para a fatia inicial
-        # existir -- alguns milissegundos. Sem ele a janela abriria vazia e so'
-        # encheria no primeiro sinal de progresso.
-        original.indexar(PARTIDA)
+        aba.posicao_mudou.connect(self._mostrar_posicao)
+        aba.titulo_mudou.connect(self._atualizar_titulos)
+        aba.indexando.connect(self._ao_indexar)
+        aba.indexou.connect(self._ao_terminar_indice)
 
-        self._fechar_atual()
-        self.caminho = alvo
-        self.original = original
-        self.documento = Documento(original)
-        janela = JanelaViva(self.documento, perfil)
-        self.editor = EditorDeslizante(janela, self)
-        self.editor.posicao_mudou.connect(self._mostrar_posicao)
-        self.editor.sujou.connect(self._mostrar_titulo)
-        self.setCentralWidget(self.editor)
-
-        self.rotulo_codec.setText(f"{perfil.rotulo}  {perfil.rotulo_eol}")
-        self._mostrar_titulo()
-        self._mostrar_posicao(0, 0)
-
-        if original.indexacao_completa:
-            self._ao_terminar_indice(original.total_de_linhas)
-        else:
-            # Ler ja'; editar quando a varredura acabar. Editar antes daria
-            # contagens de linha erradas -- ver `Documento.pode_editar`.
-            self.editor.setReadOnly(True)
+        indice = self.abas.addTab(aba, aba.titulo)
+        self.abas.setTabToolTip(indice, str(aba.caminho))
+        self.abas.setCurrentIndex(indice)
+        if aba.indexando_agora:
             self.progresso.setRange(0, 100)
             self.progresso.setValue(0)
             self.progresso.show()
             self.barra.showMessage(
-                f"{alvo.name}: indexando... da' para ler e rolar; editar libera "
+                f"{aba.nome}: indexando... da' para ler e rolar; editar libera "
                 f"no fim.")
-            self.indexador = Indexador(original, self)
-            self.indexador.progresso.connect(self._ao_indexar)
-            self.indexador.concluido.connect(self._ao_terminar_indice)
-            self.indexador.falhou.connect(self._ao_falhar_indice)
-            self.indexador.start()
+        else:
+            self._ao_terminar_indice(aba.original.total_de_linhas)
         return True
+
+    def fechar_aba(self, indice: int) -> bool:
+        aba = self.abas.widget(indice)
+        if not isinstance(aba, Aba):
+            return False
+        aba.editor.sincronizar()
+        if aba.modificado and not self._perguntar_para_fechar(aba):
+            return False
+        self.abas.removeTab(indice)
+        aba.encerrar()
+        aba.deleteLater()
+        if self.abas.count() == 0:
+            self.rotulo_posicao.clear()
+            self.rotulo_codec.clear()
+            self.rotulo_memoria.clear()
+            self.setWindowTitle(f"TextForgeEdit {VERSAO}")
+            self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um "
+                                   "para ca")
+        return True
+
+    def _perguntar_para_fechar(self, aba: Aba) -> bool:
+        resposta = QMessageBox.question(
+            self, "Alteracoes nao salvas",
+            f"<b>{aba.nome}</b> tem alteracoes nao salvas.<br><br>"
+            f"Salvar antes de fechar?",
+            QMessageBox.StandardButton.Save
+            | QMessageBox.StandardButton.Discard
+            | QMessageBox.StandardButton.Cancel)
+        if resposta == QMessageBox.StandardButton.Cancel:
+            return False
+        if resposta == QMessageBox.StandardButton.Save:
+            return self._gravar(aba)
+        return True
+
+    def _ao_trocar_de_aba(self, _indice: int) -> None:
+        aba = self.aba_atual
+        if aba is None:
+            return
+        self.rotulo_codec.setText(
+            f"{aba.perfil.rotulo}  {aba.perfil.rotulo_eol}")
+        self._mostrar_posicao(aba.editor.linha_atual_no_documento(), 0)
+        self.progresso.setVisible(aba.indexando_agora)
+        self._atualizar_titulos()
+        aba.editor.setFocus()
+
+    def _atualizar_titulos(self) -> None:
+        for indice, aba in enumerate(self.todas_as_abas()):
+            if self.abas.tabText(indice) != aba.titulo:
+                self.abas.setTabText(indice, aba.titulo)
+        aba = self.aba_atual
+        self.setWindowTitle(f"{aba.titulo} - TextForgeEdit {VERSAO}"
+                            if aba else f"TextForgeEdit {VERSAO}")
 
     # ==================================================================
     # Indexacao
     # ==================================================================
 
     def _ao_indexar(self, varrido: int, total: int) -> None:
+        aba = self.aba_atual
+        if aba is None or self.sender() is not aba:
+            return                       # progresso de uma aba de fundo
         self.progresso.setValue(varrido * 100 // max(1, total))
-        if self.editor is not None:
-            # A barra de rolagem e a margem seguem a contagem, que cresce.
-            self.editor._ajustar_margem()
-        self._mostrar_posicao(self.editor.linha_atual_no_documento()
-                              if self.editor else 0, 0)
+        aba.editor._ajustar_margem()
 
     def _ao_terminar_indice(self, total_de_linhas: int) -> None:
-        self.progresso.hide()
-        if self.editor is not None:
-            self.editor.setReadOnly(False)
-            self.editor._ajustar_margem()
-        mb = (self.original.tamanho / (1024 * 1024)) if self.original else 0
-        nome = self.caminho.name if self.caminho else ""
+        aba = self.aba_atual
+        if aba is None:
+            return
+        self.progresso.setVisible(aba.indexando_agora)
+        mb = aba.original.tamanho / (1024 * 1024)
         self.barra.showMessage(
-            f"{nome}: {mb:,.1f} MB, {total_de_linhas:,} linhas. "
+            f"{aba.nome}: {mb:,.1f} MB, {total_de_linhas:,} linhas. "
             f"O arquivo continua no disco.".replace(",", "."), 8000)
 
-    def _ao_falhar_indice(self, erro: str) -> None:
-        self.progresso.hide()
-        self.barra.showMessage(f"A indexacao falhou: {erro}. O arquivo segue "
-                               f"legivel ate' onde foi varrido.", 10000)
-
-    def _fechar_atual(self) -> None:
-        """Para a varredura e SO' ENTAO fecha o mmap.
-
-        A ordem importa: fechar o mmap com o worker lendo dele levanta na thread
-        de disco. `parar()` espera a thread sair.
-        """
-        if self.indexador is not None:
-            self.indexador.parar()
-            self.indexador = None
-        if self.original is not None:
-            self.original.fechar()
-        self.original = None
-        self.documento = None
-
     # ==================================================================
-    # Salvar
+    # Gravar
     # ==================================================================
 
     def salvar(self) -> bool:
-        if self.editor is None or self.documento is None or self.caminho is None:
-            return False
-        if not self.documento.pode_editar:
-            QMessageBox.information(
-                self, "Ainda indexando",
-                "A varredura do arquivo nao terminou. Salvar agora gravaria "
-                "so' a parte ja' conhecida.<br><br>Espere a barra de progresso "
-                "sumir.")
-            return False
-        self.editor.sincronizar()
-        if not self.documento.alterado:
-            self.barra.showMessage("Nada a salvar: nenhuma alteracao pendente.",
-                                   4000)
-            return True
+        aba = self.aba_atual
+        return self._gravar(aba) if aba is not None else False
 
+    def salvar_como(self) -> bool:
+        aba = self.aba_atual
+        if aba is None:
+            return False
+        if aba.indexando_agora:
+            self._avisar_indexando()
+            return False
+        caminho, _ = QFileDialog.getSaveFileName(
+            self, "Salvar como", str(aba.caminho), FILTRO)
+        if not caminho:
+            return False
+        if Aba.chave_de(caminho) != aba.chave():
+            for outra in self.todas_as_abas():
+                if outra is not aba and outra.chave() == Aba.chave_de(caminho):
+                    QMessageBox.warning(
+                        self, "Arquivo ja' aberto",
+                        f"<b>{outra.nome}</b> esta' aberto em outra aba. "
+                        f"Feche-a antes de salvar por cima dela.")
+                    return False
+        return self._gravar(aba, destino=caminho)
+
+    def salvar_tudo(self) -> bool:
+        tudo = True
+        for aba in self.todas_as_abas():
+            if aba.modificado:
+                tudo = self._gravar(aba) and tudo
+        return tudo
+
+    def _gravar(self, aba: Aba, destino=None) -> bool:
+        if aba.indexando_agora:
+            self._avisar_indexando()
+            return False
         try:
-            escritos = gravar(self.caminho, self.documento,
-                              antes_de_trocar=self.original.fechar)
+            escritos = aba.salvar(destino)
         except SemEspaco as exc:
+            log.warning("sem espaco para gravar %s: %s", aba.nome, exc)
             QMessageBox.warning(self, "Espaco insuficiente", str(exc))
             return False
         except (FalhaNaTroca, OSError) as exc:
+            log.error("falha ao gravar %s: %s", aba.nome, exc)
             QMessageBox.warning(self, "Nao foi possivel salvar", str(exc))
             return False
 
-        # O arquivo do disco e' outro: o mmap antigo esta' fechado e os offsets
-        # das pecas apontavam para ele. Reabrir e reindexar antes de qualquer
-        # leitura e' obrigatorio -- ver `Documento.confirmar_gravacao`.
-        novo = Original(self.caminho)
-        # Sincrono aqui de proposito: o documento acabou de ser gravado e
-        # qualquer leitura seguinte precisa do indice inteiro. O custo e' o
-        # mesmo memchr da abertura, e ele vem depois da escrita, que e' muito
-        # mais cara.
-        novo.indexar()
-        self.original = novo
-        self.documento.confirmar_gravacao(novo)
-        self.editor.janela.documento = self.documento
-        self.editor.recarregar(self.editor.linha_atual_no_documento())
-        self._mostrar_titulo()
-        self.barra.showMessage(
-            f"Salvo: {self.caminho.name} ({escritos / (1024*1024):,.1f} MB)"
-            .replace(",", "."), 4000)
+        self._atualizar_titulos()
+        indice = self.abas.indexOf(aba)
+        if indice >= 0:
+            self.abas.setTabToolTip(indice, str(aba.caminho))
+        if escritos:
+            self.barra.showMessage(
+                f"Salvo: {aba.nome} ({escritos / (1024*1024):,.1f} MB)"
+                .replace(",", "."), 4000)
+        else:
+            self.barra.showMessage("Nada a salvar: nenhuma alteracao pendente.",
+                                   4000)
         return True
+
+    def _avisar_indexando(self) -> None:
+        QMessageBox.information(
+            self, "Ainda indexando",
+            "A varredura do arquivo nao terminou. Salvar agora gravaria so' a "
+            "parte ja' conhecida.<br><br>Espere a barra de progresso sumir.")
+
+    # ==================================================================
+    # Localizar e substituir
+    # ==================================================================
+
+    def abrir_busca(self) -> None:
+        aba = self.aba_atual
+        selecao = aba.editor.textCursor().selectedText() if aba else ""
+        self.barra_busca.focar(selecao)
+
+    def _focar_editor(self) -> None:
+        aba = self.aba_atual
+        if aba is not None:
+            aba.editor.setFocus()
+
+    def _procurar(self, criterio: busca.Criterio, para_tras: bool) -> None:
+        aba = self.aba_atual
+        if aba is None:
+            return
+        cursor = aba.editor.textCursor()
+        linha = aba.editor.linha_atual_no_documento()
+        coluna = cursor.columnNumber()
+        # Ao procurar para a frente, comeca DEPOIS da selecao atual: senao F3
+        # acharia de novo a ocorrencia que ja' esta' selecionada.
+        if not para_tras and cursor.hasSelection():
+            coluna = max(coluna, cursor.selectionEnd()
+                         - cursor.block().position())
+
+        achado = busca.proxima(aba.documento, criterio, aba.perfil.codec,
+                               linha, coluna, para_tras=para_tras)
+        if achado is None:
+            self.barra_busca.dizer("nao encontrado", erro=True)
+            return
+        self._ir_para_achado(aba, achado)
+        self.barra_busca.dizer(f"linha {achado.linha + 1:,}".replace(",", "."))
+
+    def _ir_para_achado(self, aba: Aba, achado: busca.Achado) -> None:
+        """Leva o cursor ate' a ocorrencia, deslizando a fatia se preciso."""
+        aba.editor.ir_para_linha(achado.linha)
+        na_fatia = aba.janela.linha_na_fatia(achado.linha)
+        if na_fatia < 0:
+            return
+        cursor = aba.editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.Start)
+        cursor.movePosition(QTextCursor.MoveOperation.Down,
+                            QTextCursor.MoveMode.MoveAnchor, na_fatia)
+        cursor.movePosition(QTextCursor.MoveOperation.Right,
+                            QTextCursor.MoveMode.MoveAnchor, achado.inicio)
+        cursor.movePosition(QTextCursor.MoveOperation.Right,
+                            QTextCursor.MoveMode.KeepAnchor,
+                            achado.fim - achado.inicio)
+        aba.editor.setTextCursor(cursor)
+        aba.editor.centerCursor()
+
+    def _substituir_atual(self, criterio: busca.Criterio, troca: str) -> None:
+        aba = self.aba_atual
+        if aba is None or aba.editor.isReadOnly():
+            return
+        cursor = aba.editor.textCursor()
+        padrao = criterio.compilar()
+        if padrao is None:
+            return
+        # So' troca se o que esta' SELECIONADO for de fato uma ocorrencia --
+        # senao "Trocar" apagaria um texto qualquer que o usuario tivesse
+        # selecionado por outro motivo.
+        if cursor.hasSelection() and padrao.fullmatch(cursor.selectedText()):
+            cursor.insertText(padrao.sub(troca, cursor.selectedText(), count=1))
+            aba.editor.setTextCursor(cursor)
+        self._procurar(criterio, False)
+
+    def _substituir_todas(self, criterio: busca.Criterio, troca: str) -> None:
+        aba = self.aba_atual
+        if aba is None:
+            return
+        if aba.indexando_agora:
+            self._avisar_indexando()
+            return
+        aba.editor.sincronizar()
+
+        quantas, cortou = busca.contar(aba.documento, criterio,
+                                       aba.perfil.codec,
+                                       teto=TETO_DE_SUBSTITUICOES)
+        if not quantas:
+            self.barra_busca.dizer("nao encontrado", erro=True)
+            return
+        aviso = (f"<b>{quantas:,}</b> ocorrencia(s) de "
+                 f"<b>{criterio.texto}</b> serao substituidas.".replace(",", "."))
+        if cortou:
+            aviso += (f"<br><br>O arquivo tem MAIS que isso: so' as primeiras "
+                      f"{TETO_DE_SUBSTITUICOES:,} serao trocadas nesta "
+                      f"passada.".replace(",", "."))
+        if QMessageBox.question(
+                self, "Substituir todas", aviso + "<br><br>Continuar?",
+                QMessageBox.StandardButton.Yes
+                | QMessageBox.StandardButton.No) != QMessageBox.StandardButton.Yes:
+            return
+
+        feitas = busca.substituir_todas(aba.documento, criterio,
+                                        aba.perfil.codec, troca,
+                                        teto=TETO_DE_SUBSTITUICOES)
+        # O documento mudou por baixo da fatia: recarregar e' obrigatorio, senao
+        # o editor mostraria o texto de antes das trocas.
+        aba.editor.recarregar(aba.editor.linha_atual_no_documento())
+        aba.titulo_mudou.emit()
+        self.barra_busca.dizer(f"{feitas:,} substituida(s)".replace(",", "."))
+        log.info("substituir todas em %s: %d ocorrencia(s)", aba.nome, feitas)
 
     # ==================================================================
     # Navegacao e status
@@ -227,52 +434,73 @@ class JanelaPrincipal(QMainWindow):
     def ir_para_linha(self) -> None:
         from PySide6.QtWidgets import QInputDialog
 
-        if self.editor is None or self.documento is None:
+        aba = self.aba_atual
+        if aba is None:
             return
-        total = self.documento.total_de_linhas
+        total = aba.documento.total_de_linhas
         numero, ok = QInputDialog.getInt(
             self, "Ir para linha", f"Linha (1 a {total:,}):".replace(",", "."),
-            self.editor.linha_atual_no_documento() + 1, 1, total)
+            aba.editor.linha_atual_no_documento() + 1, 1, total)
         if ok:
-            self.editor.ir_para_linha(numero - 1)
+            aba.editor.ir_para_linha(numero - 1)
+
+    def _no_editor(self, metodo: str) -> None:
+        aba = self.aba_atual
+        if aba is not None:
+            getattr(aba.editor, metodo)()
 
     def _mostrar_posicao(self, linha: int, coluna: int) -> None:
-        total = self.documento.total_de_linhas if self.documento else 0
+        aba = self.aba_atual
+        if aba is None:
+            return
+        total = aba.documento.total_de_linhas
         self.rotulo_posicao.setText(
             f"Ln {linha + 1:,} de {total:,}   Col {coluna + 1}"
             .replace(",", "."))
-        if self.documento is not None:
-            # O numero que justifica o projeto inteiro: quanto do arquivo esta'
-            # de fato na memoria.
-            vivos = sum(p.tamanho for p in self.documento.blocos()
-                        if p.fonte == "adicionado")
-            self.rotulo_memoria.setText(f"editado: {vivos / 1024:,.1f} KB"
-                                        .replace(",", "."))
+        # O numero que justifica o projeto inteiro: quanto do arquivo esta' de
+        # fato na memoria.
+        vivos = sum(p.tamanho for p in aba.documento.blocos()
+                    if p.fonte == "adicionado")
+        self.rotulo_memoria.setText(f"editado: {vivos / 1024:,.1f} KB"
+                                    .replace(",", "."))
 
-    def _mostrar_titulo(self) -> None:
-        nome = self.caminho.name if self.caminho else "sem titulo"
-        sujo = "*" if (self.documento is not None
-                       and (self.documento.alterado
-                            or (self.editor is not None
-                                and self.editor.document().isModified()))) else ""
-        self.setWindowTitle(f"{sujo}{nome} - TextForgeEdit {VERSAO}")
+    # ==================================================================
+    # Arrastar-e-soltar
+    # ==================================================================
+
+    def dragEnterEvent(self, evento) -> None:             # noqa: N802 - Qt
+        if evento.mimeData().hasUrls():
+            evento.acceptProposedAction()
+
+    def dropEvent(self, evento) -> None:                  # noqa: N802 - Qt
+        """Abre os arquivos soltos na janela.
+
+        So' arquivo LOCAL: uma URL remota exigiria baixar, e este editor nao faz
+        rede. Pasta e' ignorada em vez de tentar abrir tudo o que ha' dentro.
+        """
+        abertos = 0
+        for url in evento.mimeData().urls():
+            if not url.isLocalFile():
+                continue
+            caminho = pathlib.Path(url.toLocalFile())
+            if caminho.is_file() and self.abrir_arquivo(str(caminho)):
+                abertos += 1
+        if abertos:
+            evento.acceptProposedAction()
+
+    # ==================================================================
+    # Fim
+    # ==================================================================
 
     def closeEvent(self, evento) -> None:                 # noqa: N802 - Qt
-        if self.editor is not None:
-            self.editor.sincronizar()
-        if self.documento is not None and self.documento.alterado:
-            resposta = QMessageBox.question(
-                self, "Alteracoes nao salvas",
-                f"<b>{self.caminho.name if self.caminho else ''}</b> tem "
-                f"alteracoes nao salvas.<br><br>Salvar antes de sair?",
-                QMessageBox.StandardButton.Save
-                | QMessageBox.StandardButton.Discard
-                | QMessageBox.StandardButton.Cancel)
-            if resposta == QMessageBox.StandardButton.Cancel:
-                evento.ignore()
-                return
-            if resposta == QMessageBox.StandardButton.Save and not self.salvar():
-                evento.ignore()
-                return
-        self._fechar_atual()
+        for aba in self.todas_as_abas():
+            aba.editor.sincronizar()
+            if aba.modificado:
+                self.abas.setCurrentWidget(aba)
+                if not self._perguntar_para_fechar(aba):
+                    evento.ignore()
+                    return
+        for aba in self.todas_as_abas():
+            aba.encerrar()
+        log.info("encerrando")
         evento.accept()

@@ -56,8 +56,11 @@ Já dá para abrir, digitar e salvar:
 | `tfedit/gravacao.py` — gravação por streaming, troca atômica | pronto |
 | `tfedit/codificacao.py` — cascata de detecção, fim de linha | pronto |
 | `tfedit/janela.py` — a janela viva e a escrita de volta mínima | pronto |
-| `tfedit/interface/` — editor deslizante e janela principal | mínimo usável |
-| Abas, pesquisa, sessão, empacotamento | não começou |
+| `tfedit/busca.py` — localizar e substituir no documento inteiro | pronto |
+| `tfedit/log_interno.py` — log e captura de erro não tratado | pronto |
+| `tfedit/interface/` — abas, editor deslizante, barra de busca | pronto |
+| Empacotamento (`build.bat`, `.spec`, ZIP) | pronto |
+| Sessão restaurada, realce de sintaxe, instância única | não começou |
 
 **Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
 começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
@@ -88,6 +91,36 @@ corrigida injetaria a fatia inteira — centenas de KB para representar um byte.
 **Limitação conhecida:** desfazer vale dentro da fatia. Ao deslizar, o que foi
 editado é consolidado e a pilha do Qt recomeça.
 
+## O que já dá para fazer
+
+| | |
+|---|---|
+| **Abas** | uma por arquivo — reabrir o mesmo caminho foca a aba existente, inclusive com caixa diferente |
+| **Salvar / Salvar como / Salvar tudo** | `Ctrl+S`, `Ctrl+Shift+S` |
+| **Localizar e substituir** | `Ctrl+F`, `F3`, `Shift+F3` — com maiúsculas, palavra inteira e regex |
+| **Arrastar-e-soltar** | solte arquivos na janela |
+| **Ir para linha** | `Ctrl+G` |
+
+A busca varre o **documento inteiro**, e não a fatia carregada. Achar na linha
+150.000 desliza a janela até lá. Ela também enxerga o que você digitou e ainda
+não gravou — e **não** encontra o que você apagou, embora ainda esteja no
+arquivo.
+
+`Substituir todas` aplica de trás para a frente: do começo, cada troca deslocaria
+o que vem depois e a segunda cairia no lugar errado. Tem teto de 100.000 por
+passada, avisado antes.
+
+## Diagnóstico
+
+O log fica em `%APPDATA%\TextForgeEdit\textforgeedit.log`, com rotação em 2 MB.
+Toda exceção não tratada vai para lá **e** para `erro.log`, com o traceback
+inteiro.
+
+Isso existe por uma falha concreta: numa sessão de teste o executável sumiu
+depois de gravar um arquivo de 176 MB e não havia nada para consultar. Três
+tentativas de reproduzir falharam, e o defeito segue sem causa conhecida — mas na
+próxima vez haverá rastro.
+
 ## Decisões já tomadas, e o porquê
 
 **Tudo é em bytes, não em caracteres.** Saber que a posição 4.000.000 é o
@@ -114,6 +147,18 @@ py -3.13 -m venv .venv
 .venv\Scripts\python.exe -m pip install -r requirements.txt
 .venv\Scripts\python.exe tests\rodar_todos.py
 ```
+
+## Gerar o executável
+
+```bat
+build.bat              :: dist\TextForgeEdit\    (one-dir, recomendado)
+build.bat umarquivo    :: dist\TextForgeEdit.exe (portátil)
+```
+
+O `build.bat` roda a suíte **antes** de empacotar e uma prova de vida do `.exe`
+**depois**: ela cria um arquivo, edita, grava, confere byte a byte e ainda testa
+a busca. Excludes agressivos quebram o programa só em tempo de execução — sem
+essa prova, isso chegaria como relatório de bug do usuário.
 
 Sem pytest, de propósito — cada suíte roda num processo separado, então um
 travamento de Qt numa não leva as outras.

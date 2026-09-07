@@ -27,10 +27,10 @@ TEM_QT = preparar_qt()
 def esperar_indice(janela, limite_s: float = 60.0) -> bool:
     """Segura ate' a varredura em thread terminar.
 
-    A abertura passou a ser ASSINCRONA: `abrir_arquivo` devolve com o arquivo
-    ja' legivel, mas com a contagem de linhas ainda crescendo. Um teste que
-    conferisse o total logo depois de abrir mediria o meio da varredura -- e foi
-    exatamente o que aconteceu quando a thread entrou.
+    A abertura e' ASSINCRONA: `abrir_arquivo` devolve com o arquivo ja' legivel,
+    mas com a contagem de linhas ainda crescendo. Um teste que conferisse o
+    total logo depois de abrir mediria o meio da varredura -- e foi exatamente o
+    que aconteceu quando a thread entrou.
     """
     import time
 
@@ -39,13 +39,26 @@ def esperar_indice(janela, limite_s: float = 60.0) -> bool:
     limite = time.monotonic() + limite_s
     while time.monotonic() < limite:
         QApplication.processEvents()
-        if janela.original is None or janela.original.indexacao_completa:
-            if janela.indexador is not None:
-                janela.indexador.wait(5_000)
+        if all(not aba.indexando_agora for aba in janela.todas_as_abas()):
+            for aba in janela.todas_as_abas():
+                if aba.indexador is not None:
+                    aba.indexador.wait(5_000)
             QApplication.processEvents()
             return True
         time.sleep(0.01)
     return False
+
+
+def encerrar(janela) -> None:
+    """Fecha sem passar pelo dialogo de "alteracoes nao salvas".
+
+    Um `QMessageBox` modal em modo offscreen nao tem quem o feche, e a suite
+    travaria para sempre.
+    """
+    for aba in janela.todas_as_abas():
+        janela.abas.removeTab(janela.abas.indexOf(aba))
+        aba.encerrar()
+    janela.close()
 
 
 def gerar(pasta, nome: str, linhas: int, eol: bytes = b"\r\n"):
@@ -72,14 +85,15 @@ def testar_ponta_a_ponta() -> None:
 
         janela = JanelaPrincipal()
         checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
-        editor = janela.editor
-        checa(editor.isReadOnly() or janela.original.indexacao_completa,
+        aba = janela.aba_atual
+        editor = aba.editor
+        checa(editor.isReadOnly() or aba.original.indexacao_completa,
               "*** enquanto indexa, o editor fica somente leitura: editar "
               "antes daria contagem de linha errada ***")
         checa(esperar_indice(janela), "a varredura em thread termina")
         checa(not editor.isReadOnly(),
               "e ai' a edicao libera")
-        checa_igual(janela.documento.total_de_linhas, LINHAS + 1,
+        checa_igual(aba.documento.total_de_linhas, LINHAS + 1,
                     "o total de linhas bate")
 
         # O widget so' pode ter a FATIA. Se ele tiver o arquivo inteiro, a
@@ -97,7 +111,7 @@ def testar_ponta_a_ponta() -> None:
         for caractere in " >> EDITADO: ação":
             editor.insertPlainText(caractere)
         editor.sincronizar()
-        checa("ação" in janela.documento.linha(10).decode("utf-8", "replace"),
+        checa("ação" in aba.documento.linha(10).decode("utf-8", "replace"),
               "*** o texto digitado, com acento, chegou a' tabela de pecas ***")
 
         # Ir para longe desliza a fatia; editar la' e voltar preserva as duas.
@@ -114,10 +128,10 @@ def testar_ponta_a_ponta() -> None:
         longe = editor.linha_atual_no_documento()
 
         editor.ir_para_linha(10)
-        checa("ação" in janela.documento.linha(10).decode("utf-8", "replace"),
+        checa("ação" in aba.documento.linha(10).decode("utf-8", "replace"),
               "*** a primeira edicao sobreviveu ao deslize de ida e volta ***")
 
-        vivos = sum(p.tamanho for p in janela.documento.blocos()
+        vivos = sum(p.tamanho for p in aba.documento.blocos()
                     if p.fonte == "adicionado")
         checa(vivos < 5_000,
               f"*** {vivos} bytes vivos na memoria para um arquivo de "
@@ -135,9 +149,9 @@ def testar_ponta_a_ponta() -> None:
         checa_igual(disco.count(b"\r\n"), LINHAS,
                     "*** o CRLF das 200 mil linhas foi preservado ***")
 
-        checa(not janela.documento.alterado,
+        checa(not aba.documento.alterado,
               "depois de gravar nao ha' pendencia")
-        janela._fechar_atual()
+        encerrar(janela)
 
 
 def testar_sem_edicao_nao_grava() -> None:
@@ -152,17 +166,18 @@ def testar_sem_edicao_nao_grava() -> None:
         janela = JanelaPrincipal()
         janela.abrir_arquivo(str(alvo))
         esperar_indice(janela)
-        editor = janela.editor
+        aba = janela.aba_atual
+        editor = aba.editor
         for linha in (0, 20_000, 5_000, 29_000, 0):
             editor.ir_para_linha(linha)
         editor.sincronizar()
 
-        checa(not janela.documento.alterado,
+        checa(not aba.documento.alterado,
               "*** rolar por todo o arquivo nao marca nada como alterado ***")
         janela.salvar()
         checa_igual(alvo.read_bytes(), antes,
                     "*** e o arquivo no disco nao mudou um byte ***")
-        janela._fechar_atual()
+        encerrar(janela)
 
 
 def testar_margem_e_posicao() -> None:
@@ -175,7 +190,8 @@ def testar_margem_e_posicao() -> None:
         janela = JanelaPrincipal()
         janela.abrir_arquivo(str(alvo))
         esperar_indice(janela)
-        editor = janela.editor
+        aba = janela.aba_atual
+        editor = aba.editor
 
         editor.ir_para_linha(60_000)
         checa_igual(editor.linha_atual_no_documento(), 60_000,
@@ -185,7 +201,7 @@ def testar_margem_e_posicao() -> None:
               "enquanto o bloco dentro do widget e' pequeno")
         checa(editor.largura_da_margem() > 0,
               "e a margem tem largura para o maior numero do arquivo")
-        janela._fechar_atual()
+        encerrar(janela)
 
 
 def main() -> int:

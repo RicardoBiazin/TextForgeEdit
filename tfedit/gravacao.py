@@ -30,6 +30,10 @@ import shutil
 import time
 
 from tfedit.pecas import ORIGINAL, Documento
+from tfedit import log_interno
+
+
+log = log_interno.obter(__name__)
 
 #: Quanto se copia por vez. O bastante para o custo por byte ser o do memcpy.
 BLOCO = 4 * 1024 * 1024
@@ -132,6 +136,8 @@ def gravar(caminho, documento: Documento, *, antes_de_trocar=None,
         _trocar(temporario, alvo)
     finally:
         _remover(temporario)
+    log.info("gravado %s (%d bytes, %d peca(s))", alvo, escritos,
+             len(documento.blocos()))
     return escritos
 
 

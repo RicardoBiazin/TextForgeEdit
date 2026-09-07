@@ -43,6 +43,10 @@ from dataclasses import dataclass
 
 from tfedit import codificacao
 from tfedit.pecas import Documento
+from tfedit import log_interno
+
+
+log = log_interno.obter(__name__)
 
 #: Quantas linhas a janela segura. 5 mil linhas de 80 colunas sao ~400 KB -- um
 #: QTextDocument desse tamanho monta em milissegundos, e cobre com folga o que

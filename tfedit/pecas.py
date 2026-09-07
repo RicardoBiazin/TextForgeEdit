@@ -34,6 +34,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from tfedit.original import Original
+from tfedit import log_interno
+
+
+log = log_interno.obter(__name__)
 
 ORIGINAL = "original"
 ADICIONADO = "adicionado"

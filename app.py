@@ -21,7 +21,8 @@ OBRIGATORIOS = (
     "tfedit.original", "tfedit.pecas", "tfedit.gravacao",
     "tfedit.janela", "tfedit.codificacao",
     "tfedit.interface.editor", "tfedit.interface.janela_principal",
-    "tfedit.interface.indexador",
+    "tfedit.interface.indexador", "tfedit.interface.aba",
+    "tfedit.interface.barra_busca", "tfedit.busca", "tfedit.log_interno",
 )
 
 
@@ -77,8 +78,31 @@ def autoverificacao() -> int:
     janela.close()
     del aplicacao
 
-    print(f"autoverificacao OK ({len(OBRIGATORIOS)} modulos, gravacao e "
-          f"janela)")
+    # A busca tambem entra na prova de vida: ela e' o unico caminho que
+    # decodifica o documento inteiro, e um `exclude` que derrube o `re` ou o
+    # codec so' apareceria aqui.
+    from tfedit.busca import Criterio, proxima
+    from tfedit.original import Original as _O
+    from tfedit.pecas import Documento as _D
+
+    pasta2 = pathlib.Path(tempfile.mkdtemp(prefix="tfedit-auto2-"))
+    try:
+        alvo2 = pasta2 / "busca.txt"
+        alvo2.write_bytes("primeira\nsegunda com acao\nterceira\n"
+                          .encode("utf-8"))
+        orig2 = _O(alvo2)
+        orig2.indexar()
+        achado = proxima(_D(orig2), Criterio("SEGUNDA"), "utf-8", 0, 0)
+        orig2.fechar()
+        if achado is None or achado.linha != 1:
+            print("AUTOVERIFICACAO FALHOU: a busca nao achou o esperado")
+            return 1
+    finally:
+        import shutil as _sh
+        _sh.rmtree(pasta2, ignore_errors=True)
+
+    print(f"autoverificacao OK ({len(OBRIGATORIOS)} modulos, gravacao, busca "
+          f"e janela)")
     return 0
 
 
@@ -90,8 +114,14 @@ def main() -> int:
 
     from PySide6.QtWidgets import QApplication
 
-    from tfedit import APP, VERSAO
+    from tfedit import APP, VERSAO, log_interno
     from tfedit.interface.janela_principal import JanelaPrincipal
+
+    # O log e a captura de erro entram ANTES de qualquer widget: uma excecao na
+    # montagem da janela e' justamente a que nao deixa rastro sem isto.
+    log_interno.configurar()
+    log_interno.instalar_captura_de_erros()
+    log_interno.registrar_partida(VERSAO)
 
     aplicacao = QApplication(sys.argv)
     aplicacao.setApplicationName(APP)
