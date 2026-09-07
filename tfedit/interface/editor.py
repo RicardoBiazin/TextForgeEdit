@@ -180,6 +180,13 @@ class EditorDeslizante(QPlainTextEdit):
             self.redo()
             evento.accept()
             return
+        if evento.matches(QKeySequence.StandardKey.Find) \
+                or evento.matches(QKeySequence.StandardKey.Replace):
+            # Pelo MESMO motivo do Ctrl+Z acima: o widget de texto pode ficar
+            # com a tecla antes do menu. Repassar para cima e' o que faz o
+            # atalho da janela ser alcancado.
+            evento.ignore()
+            return
         super().keyPressEvent(evento)
 
     def linha_atual_no_documento(self) -> int:

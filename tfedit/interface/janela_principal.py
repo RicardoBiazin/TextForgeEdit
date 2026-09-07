@@ -145,6 +145,8 @@ class JanelaPrincipal(QMainWindow):
         localizar = self.menuBar().addMenu("&Localizar")
         acao("&Localizar...", QKeySequence.StandardKey.Find,
              self.abrir_busca, localizar)
+        acao("&Substituir...", QKeySequence.StandardKey.Replace,
+             self.abrir_substituir, localizar)
         acao("Proxima ocorrencia", "F3",
              lambda: self.barra_busca._procurar(False), localizar)
         acao("Ocorrencia anterior", "Shift+F3",
@@ -360,9 +362,16 @@ class JanelaPrincipal(QMainWindow):
     # ==================================================================
 
     def abrir_busca(self) -> None:
+        self._abrir_barra(no_substituir=False)
+
+    def abrir_substituir(self) -> None:
+        """Ctrl+H. A MESMA barra do Ctrl+F, com o foco no campo de troca."""
+        self._abrir_barra(no_substituir=True)
+
+    def _abrir_barra(self, *, no_substituir: bool) -> None:
         aba = self.aba_atual
         selecao = aba.editor.textCursor().selectedText() if aba else ""
-        self.barra_busca.focar(selecao)
+        self.barra_busca.focar(selecao, no_substituir=no_substituir)
 
     def _focar_editor(self) -> None:
         aba = self.aba_atual

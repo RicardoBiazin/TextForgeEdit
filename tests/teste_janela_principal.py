@@ -304,6 +304,83 @@ def teclar(widget, tecla, modificador=None) -> None:
                    modificador or Qt.KeyboardModifier.NoModifier)
 
 
+def testar_atalhos_de_busca() -> None:
+    secao("Ctrl+F e Ctrl+H, pela TECLA")
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeySequence
+    from PySide6.QtWidgets import QApplication
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo = tmp / "atalhos.txt"
+        alvo.write_bytes(b"um alvo aqui\ndois alvo la\n")
+
+        janela = JanelaPrincipal()
+        janela.show()
+        janela.abrir_arquivo(str(alvo))
+        esperar_indice(janela)
+        editor = janela.aba_atual.editor
+        barra = janela.barra_busca
+
+        checa_igual(QKeySequence(QKeySequence.StandardKey.Replace).toString(),
+                    "Ctrl+H", "o padrao de 'substituir' nesta plataforma")
+        checa(barra.isHidden(), "a barra comeca escondida")
+
+        # Ctrl+H com o termo VAZIO: o foco vai para o campo de cima, porque nao
+        # ha' o que substituir enquanto nao se disser o que procurar.
+        editor.setFocus()
+        QApplication.processEvents()
+        teclar(editor, Qt.Key.Key_H, Qt.KeyboardModifier.ControlModifier)
+        QApplication.processEvents()
+        checa(not barra.isHidden(),
+              "*** Ctrl+H abre a barra -- ele nao existia, e a tecla nao fazia "
+              "nada ***")
+        checa(barra.campo.hasFocus(),
+              "com o termo vazio, o foco comeca no campo de busca")
+
+        # Com o termo preenchido, o Ctrl+H vai direto ao campo de troca.
+        barra.hide()
+        barra.campo.setText("alvo")
+        editor.setFocus()
+        QApplication.processEvents()
+        teclar(editor, Qt.Key.Key_H, Qt.KeyboardModifier.ControlModifier)
+        QApplication.processEvents()
+        checa(barra.campo_troca.hasFocus(),
+              "*** com o termo ja' preenchido, Ctrl+H foca o campo de troca ***")
+
+        # Ctrl+F continua indo para o campo de busca.
+        barra.hide()
+        editor.setFocus()
+        QApplication.processEvents()
+        teclar(editor, Qt.Key.Key_F, Qt.KeyboardModifier.ControlModifier)
+        QApplication.processEvents()
+        checa(not barra.isHidden() and barra.campo.hasFocus(),
+              "e Ctrl+F seguiu indo para o campo de busca")
+
+        # Enter no campo de troca substitui, em vez de nao fazer nada.
+        barra.campo.setText("alvo")
+        barra.campo_troca.setText("MIRA")
+        barra._procurar(False)
+        barra.campo_troca.returnPressed.emit()
+        janela.aba_atual.editor.sincronizar()
+        conteudo = janela.aba_atual.documento.ler(
+            0, janela.aba_atual.documento.tamanho).decode("utf-8")
+        checa("MIRA" in conteudo,
+              "*** Enter no campo de troca substitui: sem isso o gesto de "
+              "'digitei o substituto, agora vai' ficava sem resposta ***")
+
+        nomes = []
+        for menu in janela.menuBar().actions():
+            if menu.menu() and menu.text().replace("&", "") == "Localizar":
+                nomes = [a.text().replace("&", "") for a in menu.menu().actions()
+                         if a.text()]
+        checa("Substituir..." in nomes,
+              f"e ha' item de menu para descobrir o atalho: {nomes}")
+        encerrar(janela)
+
+
 def testar_ctrl_z_em_arquivo_grande() -> None:
     secao("Ctrl+Z (a TECLA) em arquivo grande")
 
@@ -521,6 +598,7 @@ def main() -> int:
     testar_salvar_sem_edicao()
     testar_busca_pela_interface()
     testar_desfazer_apos_substituir()
+    testar_atalhos_de_busca()
     testar_ctrl_z_em_arquivo_grande()
     testar_arrastar_e_soltar()
     testar_codificacoes_lado_a_lado()

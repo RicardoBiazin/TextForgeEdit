@@ -37,6 +37,9 @@ class BarraDeBusca(QWidget):
         self.campo_troca = QLineEdit(self)
         self.campo_troca.setPlaceholderText("Substituir por")
         self.campo_troca.setClearButtonEnabled(True)
+        # Enter no campo de troca SUBSTITUI. Sem isto ele nao faz nada, e o
+        # gesto natural de "digitei o substituto, agora vai" fica sem resposta.
+        self.campo_troca.returnPressed.connect(self._substituir)
 
         self.caixa_maiusculas = QCheckBox("Aa", self)
         self.caixa_maiusculas.setToolTip("Diferenciar maiusculas de minusculas")
@@ -89,13 +92,23 @@ class BarraDeBusca(QWidget):
             palavra_inteira=self.caixa_palavra.isChecked(),
             expressao_regular=self.caixa_regex.isChecked())
 
-    def focar(self, selecao: str = "") -> None:
-        """Abre a barra. `selecao` preenche o campo -- o gesto de Ctrl+F."""
+    def focar(self, selecao: str = "", *, no_substituir: bool = False) -> None:
+        """Abre a barra. `selecao` preenche o campo -- o gesto de Ctrl+F.
+
+        `no_substituir=True` e' o Ctrl+H: a mesma barra, com o foco ja' no campo
+        de troca. Abrir um painel separado so' para substituir obrigaria a
+        digitar o termo de busca duas vezes.
+        """
         if selecao and "\n" not in selecao:
             self.campo.setText(selecao)
         self.show()
-        self.campo.setFocus()
-        self.campo.selectAll()
+        alvo = self.campo_troca if no_substituir else self.campo
+        # Com o termo de busca vazio, o Ctrl+H ainda comeca pelo campo de cima:
+        # nao ha' o que substituir enquanto nao se disser o que procurar.
+        if no_substituir and not self.campo.text():
+            alvo = self.campo
+        alvo.setFocus()
+        alvo.selectAll()
 
     def dizer(self, mensagem: str, erro: bool = False) -> None:
         self.rotulo.setText(mensagem)

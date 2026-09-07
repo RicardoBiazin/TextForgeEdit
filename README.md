@@ -115,7 +115,7 @@ daquele trecho, e não a última tecla.
 |---|---|
 | **Abas** | uma por arquivo — reabrir o mesmo caminho foca a aba existente, inclusive com caixa diferente |
 | **Salvar / Salvar como / Salvar tudo** | `Ctrl+S`, `Ctrl+Shift+S` |
-| **Localizar e substituir** | `Ctrl+F`, `F3`, `Shift+F3` — com maiúsculas, palavra inteira e regex |
+| **Localizar e substituir** | `Ctrl+F` localiza, `Ctrl+H` substitui, `F3` e `Shift+F3` navegam — com maiúsculas, palavra inteira e regex |
 | **Arrastar-e-soltar** | solte arquivos na janela |
 | **Ir para linha** | `Ctrl+G` |
 
