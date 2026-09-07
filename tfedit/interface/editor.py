@@ -19,7 +19,8 @@ ficavam na tabela sem ninguem consulta-las.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QFontMetrics, QPainter, QTextCursor
+from PySide6.QtGui import (QFont, QFontMetrics, QKeySequence, QPainter,
+                           QTextCursor)
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
 from tfedit.janela import JanelaViva
@@ -155,6 +156,31 @@ class EditorDeslizante(QPlainTextEdit):
                  else self.linha_atual_no_documento())
         self.recarregar(linha)
         self.conteudo_voltou.emit()
+
+    def keyPressEvent(self, evento) -> None:              # noqa: N802 - Qt
+        """Ctrl+Z e Ctrl+Y passam pelo NOSSO desfazer, e nao pelo do Qt.
+
+        DEFEITO RELATADO: em arquivo grande, o Ctrl+Z nao fazia nada -- embora
+        chamar `undo()` funcionasse. A diferenca e' o caminho da tecla.
+
+        O `QPlainTextEdit` ACEITA o `ShortcutOverride` das teclas de edicao, e
+        com isso fica com o Ctrl+Z ANTES do atalho do menu. Ele entao desfaz na
+        propria pilha -- que `recarregar()` esvazia a cada deslize de fatia --,
+        e a pilha da tabela de pecas nunca e' consultada. Num arquivo pequeno
+        nada disso aparece, porque a fatia nunca desliza.
+
+        Todos os testes chamavam `editor.undo()` e passavam. Testar o METODO nao
+        e' testar a TECLA: e' este `keyPressEvent` que o usuario aciona.
+        """
+        if evento.matches(QKeySequence.StandardKey.Undo):
+            self.undo()
+            evento.accept()
+            return
+        if evento.matches(QKeySequence.StandardKey.Redo):
+            self.redo()
+            evento.accept()
+            return
+        super().keyPressEvent(evento)
 
     def linha_atual_no_documento(self) -> int:
         return self.janela.linha_no_documento(self.textCursor().blockNumber())

@@ -100,6 +100,10 @@ Uma substituição em massa cabe num **único** `Ctrl+Z`: as trocas entram como 
 grupo, e desfazer processa o grupo inteiro. Sem isso, voltar atrás de 500
 substituições exigiria 500 `Ctrl+Z`, o que na prática é não poder voltar.
 
+O `Ctrl+Z` é interceptado no `keyPressEvent` do editor, e não deixado a cargo do
+atalho do menu: o `QPlainTextEdit` fica com essa tecla antes do menu e desfaria
+na própria pilha — vazia depois de todo deslize.
+
 **Limitação que resta:** ao deslizar a fatia, o que foi editado é consolidado na
 tabela e a pilha do Qt recomeça. O desfazer continua funcionando (pela tabela),
 mas a granularidade fica mais grossa — um `Ctrl+Z` desfaz a consolidação inteira

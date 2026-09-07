@@ -267,9 +267,11 @@ def testar_desfazer_apos_substituir() -> None:
               "*** mas o editor sabe que HA' o que desfazer: ele olha as duas "
               "pilhas ***")
 
-        aba.editor.undo()
+        from PySide6.QtCore import Qt as _Qt
+        aba.editor.setFocus()
+        teclar(aba.editor, _Qt.Key.Key_Z, _Qt.KeyboardModifier.ControlModifier)
         checa_igual(conteudo(), antes,
-                    "*** UM Ctrl+Z devolve o arquivo ao original ***")
+                    "*** UM Ctrl+Z (a tecla) devolve o arquivo ao original ***")
         aba.editor.redo()
         checa(b"MIRA" in conteudo(), "e Ctrl+Y reaplica")
 
@@ -284,6 +286,93 @@ def testar_desfazer_apos_substituir() -> None:
         checa("XYZ" not in aba.editor.toPlainText(),
               "*** e o Ctrl+Z desfaz a digitacao PRIMEIRO, por ser a mais "
               "recente ***")
+        encerrar(janela)
+
+
+def teclar(widget, tecla, modificador=None) -> None:
+    """Envia uma tecla DE VERDADE ao widget, em vez de chamar o metodo.
+
+    E' a diferenca que deixou passar um defeito real: `editor.undo()` funcionava
+    e o Ctrl+Z nao. O `QPlainTextEdit` aceita o `ShortcutOverride` das teclas de
+    edicao, entao a tecla chega no `keyPressEvent` DELE -- nunca no atalho do
+    menu. Testar o metodo nao e' testar a tecla.
+    """
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    QTest.keyClick(widget, tecla,
+                   modificador or Qt.KeyboardModifier.NoModifier)
+
+
+def testar_ctrl_z_em_arquivo_grande() -> None:
+    secao("Ctrl+Z (a TECLA) em arquivo grande")
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QTextCursor
+    from PySide6.QtWidgets import QApplication
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        # Grande o bastante para a fatia DESLIZAR: e' o deslize que limpa a
+        # pilha do Qt e leva o desfazer para a tabela de pecas. Num arquivo
+        # pequeno o defeito nao aparece.
+        alvo = gerar(tmp, "grande.txt", 60_000)
+
+        janela = JanelaPrincipal()
+        janela.abrir_arquivo(str(alvo))
+        esperar_indice(janela)
+        aba = janela.aba_atual
+        editor = aba.editor
+        checa(not editor.isReadOnly(),
+              "com o indice completo, o editor sai do somente leitura")
+
+        def linha(n):
+            editor.sincronizar()
+            return aba.documento.linha(n).decode("utf-8", "replace")
+
+        original = linha(100)
+        editor.ir_para_linha(100)
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+        editor.setTextCursor(cursor)
+        editor.insertPlainText(" EDITADO")
+
+        # Deslizar para longe consolida na tabela e ZERA a pilha do Qt.
+        editor.ir_para_linha(50_000)
+        editor.ir_para_linha(100)
+        QApplication.processEvents()
+        checa(" EDITADO" in linha(100), "a edicao esta' no documento")
+        checa(not editor.document().isUndoAvailable(),
+              "*** e a pilha do Qt esta' VAZIA depois do deslize ***")
+        checa(aba.documento.pode_desfazer, "mas a tabela de pecas tem o registro")
+
+        editor.setFocus()
+        QApplication.processEvents()
+        teclar(editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+        QApplication.processEvents()
+        checa_igual(linha(100), original,
+                    "*** apertar Ctrl+Z desfaz -- o QPlainTextEdit fica com a "
+                    "tecla antes do menu, e sem interceptar no keyPressEvent "
+                    "ele desfazia na pilha vazia dele ***")
+
+        teclar(editor, Qt.Key.Key_Y, Qt.KeyboardModifier.ControlModifier)
+        QApplication.processEvents()
+        checa(" EDITADO" in linha(100), "e Ctrl+Y refaz pela mesma via")
+
+        # A tecla tem de continuar valendo para a pilha do Qt tambem, que e' a
+        # mais recente: digitar e desfazer na MESMA fatia nao pode regredir.
+        editor.ir_para_linha(200)
+        antes_200 = linha(200)
+        cursor = editor.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfBlock)
+        editor.setTextCursor(cursor)
+        editor.insertPlainText(" NOVO")
+        teclar(editor, Qt.Key.Key_Z, Qt.KeyboardModifier.ControlModifier)
+        QApplication.processEvents()
+        checa_igual(linha(200), antes_200,
+                    "digitar e desfazer na mesma fatia continua indo pela "
+                    "pilha do Qt")
         encerrar(janela)
 
 
@@ -432,6 +521,7 @@ def main() -> int:
     testar_salvar_sem_edicao()
     testar_busca_pela_interface()
     testar_desfazer_apos_substituir()
+    testar_ctrl_z_em_arquivo_grande()
     testar_arrastar_e_soltar()
     testar_codificacoes_lado_a_lado()
     testar_credito_no_rodape()
