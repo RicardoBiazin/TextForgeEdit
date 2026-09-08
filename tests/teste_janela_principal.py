@@ -590,6 +590,101 @@ def testar_log() -> None:
         checa(True, "instalar a captura duas vezes nao quebra")
 
 
+
+def testar_rodape_clicavel() -> None:
+    secao("*** Linguagem e codificacao no rodape, e clicaveis ***")
+
+    from PySide6.QtCore import Qt
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo = tmp / "relatorio.sql"
+        alvo.write_bytes("SELECT * FROM tabela;\r\n".encode("utf-8") * 40)
+
+        janela = JanelaPrincipal()
+        try:
+            checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
+
+            # 1. O ESTADO ATUAL aparece nos dois campos.
+            checa_igual(janela.rotulo_linguagem.text(), "SQL",
+                        "*** o rodape mostra a linguagem ***")
+            codec = janela.rotulo_codec.text()
+            checa("UTF-8" in codec and "CRLF" in codec,
+                  f"*** e a codificacao com o fim de linha: {codec!r} ***")
+
+            # 2. Parecem clicaveis. Um rotulo de barra de status normalmente
+            # nao faz nada ao ser clicado; sem a maozinha e a dica, ninguem
+            # descobriria que estes fazem.
+            for rotulo, nome in ((janela.rotulo_linguagem, "linguagem"),
+                                 (janela.rotulo_codec, "codificacao")):
+                checa_igual(rotulo.cursor().shape(),
+                            Qt.CursorShape.PointingHandCursor,
+                            f"o campo de {nome} tem cursor de maozinha")
+                checa("lique" in rotulo.toolTip(),
+                      f"e a dica convida a clicar: {rotulo.toolTip()!r}")
+
+            # 3. Clicar abre o menu, com o mesmo conteudo do menu da barra.
+            menu = janela._menu_no_rodape_linguagem()
+            nomes = [a.text() for a in menu.actions()]
+            checa(len(nomes) >= 20,
+                  f"*** o clique na linguagem abre a lista ({len(nomes)}) ***")
+            marcada = [a.text() for a in menu.actions() if a.isChecked()]
+            checa_igual(marcada, ["SQL"], "com a atual marcada")
+            menu.hide()
+
+            menu = janela._menu_no_rodape_codificacao()
+            submenus = sorted(a.menu().title().replace("&", "")
+                              for a in menu.actions() if a.menu() is not None)
+            checa_igual(submenus, ["Converter para", "Reinterpretar como"],
+                        "*** e o clique na codificacao abre os dois verbos ***")
+            menu.hide()
+
+            # 4. Trocar PELO RODAPE muda de verdade, e o rotulo acompanha.
+            janela._trocar_linguagem("Python")
+            checa_igual(janela.rotulo_linguagem.text(), "Python",
+                        "*** trocar pelo rodape atualiza o proprio rodape ***")
+            checa_igual(janela.aba_atual.nome_da_linguagem, "Python",
+                        "e a aba trocou de verdade")
+
+            # 5. Sem arquivo, o menu explica em vez de quebrar.
+            janela.fechar_aba(0)
+            menu = janela._menu_no_rodape_codificacao()
+            acoes = menu.actions()
+            checa(len(acoes) == 1 and not acoes[0].isEnabled(),
+                  "sem arquivo, o clique abre um menu que so' explica")
+            menu.hide()
+        finally:
+            encerrar(janela)
+
+
+def testar_menu_do_rodape_nao_trava() -> None:
+    secao("*** O menu do rodape nao congela o laco de eventos ***")
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo = gerar(tmp, "vivo.txt", 200)
+        janela = JanelaPrincipal()
+        try:
+            checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
+
+            # `exec()` abre um laco de eventos ANINHADO e so' volta quando o
+            # menu fecha. Num editor que indexa em thread e desliza a fatia,
+            # congelar o laco principal por um menu de rodape e' pedir
+            # problema. Se alguem trocar `popup` por `exec`, a chamada abaixo
+            # NUNCA retorna: nao ha' quem feche o menu numa suite, e o runner
+            # acusa a suite travada em vez de passar em silencio.
+            menu = janela._menu_no_rodape_codificacao()
+            checa(menu is not None,
+                  "*** o metodo VOLTOU: `popup` e nao `exec` ***")
+            checa(bool(menu.actions()),
+                  f"e o menu veio preenchido ({len(menu.actions())} itens)")
+            menu.hide()
+        finally:
+            encerrar(janela)
+
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -603,6 +698,8 @@ def main() -> int:
     testar_arrastar_e_soltar()
     testar_codificacoes_lado_a_lado()
     testar_credito_no_rodape()
+    testar_rodape_clicavel()
+    testar_menu_do_rodape_nao_trava()
     testar_log()
     return resumir()
 

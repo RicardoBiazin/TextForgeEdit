@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPoint, Qt, Signal
 from PySide6.QtGui import (QAction, QActionGroup, QKeySequence,
                            QTextCursor)
-from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow,
-                               QMessageBox, QProgressBar, QStatusBar,
-                               QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel,
+                               QMainWindow, QMenu, QMessageBox,
+                               QProgressBar, QStatusBar, QTabWidget,
+                               QVBoxLayout, QWidget)
 
 from tfedit import (APP, AUTOR, VERSAO, busca, codificacao,
                     configuracao, conversao, linguagens,
@@ -37,8 +38,18 @@ FILTRO = ("Arquivos de texto (*.txt *.log *.csv *.dat *.json *.xml *.sql "
 TETO_DE_SUBSTITUICOES = 100_000
 
 
-class _Credito(QLabel):
-    """O credito do rodape. Clicavel, porque ja' existe onde levar."""
+class _RotuloClicavel(QLabel):
+    """Um campo do rodapé que responde ao clique.
+
+    O rodapé é onde a pessoa JÁ está olhando para saber a codificação e a
+    linguagem do arquivo. Obrigá-la a subir até a barra de menus para trocar
+    o que está lendo ali é atravessar a janela inteira por uma informação que
+    estava debaixo do cursor.
+
+    O cursor de mãozinha e a dica não são enfeite: um rótulo de barra de
+    status normalmente não faz nada ao ser clicado, então nada indicaria que
+    este faz — o usuário nunca tentaria.
+    """
 
     clicado = Signal()
 
@@ -97,10 +108,13 @@ class JanelaPrincipal(QMainWindow):
         self.barra = QStatusBar(self)
         self.setStatusBar(self.barra)
         self.rotulo_posicao = QLabel("", self)
-        self.rotulo_linguagem = QLabel("", self)
-        self.rotulo_linguagem.setToolTip(
-            "Linguagem do realce. Menu Linguagem para trocar.")
-        self.rotulo_codec = QLabel("", self)
+        self.rotulo_linguagem = _RotuloClicavel(
+            "", "Linguagem do realce. Clique para trocar.", self)
+        self.rotulo_linguagem.clicado.connect(self._menu_no_rodape_linguagem)
+        self.rotulo_codec = _RotuloClicavel(
+            "", "Codificação e fim de linha. Clique para reinterpretar ou "
+                "converter.", self)
+        self.rotulo_codec.clicado.connect(self._menu_no_rodape_codificacao)
         self.rotulo_memoria = QLabel("", self)
         self.progresso = QProgressBar(self)
         self.progresso.setMaximumWidth(160)
@@ -114,7 +128,7 @@ class JanelaPrincipal(QMainWindow):
         # `addPermanentWidget`, e nao `addWidget`: a area dos widgets NAO
         # permanentes e' a mesma em que `showMessage()` desenha, e um credito
         # ali seria coberto -- ou empurrado -- a cada "Salvo: arquivo.txt".
-        self.credito = _Credito(
+        self.credito = _RotuloClicavel(
             f"Produzido por {AUTOR} · v{VERSAO}",
             f"{APP} {VERSAO}\nProduzido por {AUTOR}.\n"
             f"Clique para ver a licença e as versões.", self)
@@ -127,6 +141,9 @@ class JanelaPrincipal(QMainWindow):
     # ==================================================================
 
     def _montar_menu_codificacao(self) -> None:
+        self._preencher_codificacao(self.menu_codificacao)
+
+    def _preencher_codificacao(self, menu) -> None:
         """Dois grupos, com dois verbos, e a diferença escrita no menu.
 
         Juntar "reinterpretar" e "converter" num comando só foi o defeito
@@ -134,20 +151,23 @@ class JanelaPrincipal(QMainWindow):
         mudar e o arquivo continuar igual, ou o contrário. São operações
         diferentes: uma lê os mesmos bytes de outro jeito, a outra reescreve
         o arquivo inteiro.
+
+        Recebe o menu em vez de usar o da barra porque o rodapé abre o MESMO
+        menu ao clique. Duas montagens paralelas divergiriam na primeira
+        codificação nova.
         """
-        self.menu_codificacao.clear()
+        menu.clear()
         aba = self.aba_atual
         if aba is None:
-            acao = self.menu_codificacao.addAction("(nenhum arquivo aberto)")
+            acao = menu.addAction("(nenhum arquivo aberto)")
             acao.setEnabled(False)
             return
 
-        titulo = self.menu_codificacao.addAction(
-            f"Este arquivo está em {aba.perfil.rotulo}")
+        titulo = menu.addAction(f"Este arquivo está em {aba.perfil.rotulo}")
         titulo.setEnabled(False)
-        self.menu_codificacao.addSeparator()
+        menu.addSeparator()
 
-        reler = self.menu_codificacao.addMenu("&Reinterpretar como")
+        reler = menu.addMenu("&Reinterpretar como")
         reler.setToolTip("Lê os mesmos bytes de outro jeito. O arquivo no "
                          "disco não muda.")
         for alvo in conversao.ALVOS:
@@ -157,7 +177,7 @@ class JanelaPrincipal(QMainWindow):
             acao.triggered.connect(
                 lambda _c=False, a=alvo: self._reinterpretar(a))
 
-        converter = self.menu_codificacao.addMenu("&Converter para")
+        converter = menu.addMenu("&Converter para")
         converter.setToolTip("Reescreve o arquivo inteiro na codificação "
                              "escolhida.")
         for alvo in conversao.ALVOS:
@@ -254,29 +274,64 @@ class JanelaPrincipal(QMainWindow):
     # ==================================================================
 
     def _montar_menu_linguagem(self) -> None:
+        self._preencher_linguagem(self.menu_linguagem)
+
+    def _preencher_linguagem(self, menu) -> None:
         """Monta o menu SÓ quando ele abre.
 
         Vinte e quatro ações criadas no arranque custariam tempo de abertura
-        para um menu que a maioria das sessões nunca usa.
+        para um menu que a maioria das sessões nunca usa. Recebe o menu porque
+        o rodapé abre o mesmo conteúdo ao clique.
         """
-        self.menu_linguagem.clear()
+        menu.clear()
         aba = self.aba_atual
         if aba is None:
-            acao = self.menu_linguagem.addAction("(nenhum arquivo aberto)")
+            acao = menu.addAction("(nenhum arquivo aberto)")
             acao.setEnabled(False)
             return
 
         linguagens.carregar_embutidos()
         atual = aba.provedor.nome if aba.provedor is not None else ""
-        grupo = QActionGroup(self.menu_linguagem)
+        grupo = QActionGroup(menu)
         grupo.setExclusive(True)
         for nome in sorted(registro_de_linguagens.REGISTRO.nomes()):
-            acao = self.menu_linguagem.addAction(nome)
+            acao = menu.addAction(nome)
             acao.setCheckable(True)
             acao.setChecked(nome == atual)
             acao.triggered.connect(
                 lambda _c=False, n=nome: self._trocar_linguagem(n))
             grupo.addAction(acao)
+
+    def _abrir_no_rodape(self, rotulo, preencher):
+        """Abre um menu ANCORADO no rótulo do rodapé. Devolve o menu.
+
+        Ancorado ACIMA do rótulo, e não sob o cursor: o rodapé fica na borda de
+        baixo da tela, e um menu que desce nasce fora do monitor. O Qt corrige
+        sozinho, mas empurrando o menu para um canto longe do que foi clicado.
+
+        `popup`, e não `exec`: `exec` abre um laço de eventos aninhado e só
+        volta quando o menu fecha. Num editor que indexa em thread e desliza a
+        fatia, congelar o laço principal por um menu de rodapé é pedir
+        problema — e um `exec` também travaria a suíte, que não tem quem
+        feche o menu.
+
+        O menu se destrói ao fechar; guardá-lo em `self` faria o próximo clique
+        vazar o anterior.
+        """
+        menu = QMenu(self)
+        preencher(menu)
+        menu.aboutToHide.connect(menu.deleteLater)
+        ponto = rotulo.mapToGlobal(rotulo.rect().topLeft())
+        menu.popup(QPoint(ponto.x(), ponto.y() - menu.sizeHint().height()))
+        return menu
+
+    def _menu_no_rodape_codificacao(self):
+        return self._abrir_no_rodape(self.rotulo_codec,
+                                     self._preencher_codificacao)
+
+    def _menu_no_rodape_linguagem(self):
+        return self._abrir_no_rodape(self.rotulo_linguagem,
+                                     self._preencher_linguagem)
 
     def _trocar_linguagem(self, nome: str) -> None:
         aba = self.aba_atual

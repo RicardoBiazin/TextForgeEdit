@@ -74,6 +74,16 @@ memória. O `QPlainTextEdit` segura 5.001 blocos — a fatia —, e não as 400.
 linhas. Gravar preserva o CRLF das 400.000 linhas e deixa intactas as que não
 foram tocadas.
 
+## O rodapé é interativo
+
+A linguagem e a codificação aparecem no rodapé, e **clicar em qualquer um dos
+dois abre o menu para trocar** — é onde a pessoa já está olhando para saber o
+que o arquivo é. Obrigá-la a subir até a barra de menus para mudar o que está
+lendo ali é atravessar a janela por uma informação que estava debaixo do cursor.
+
+Os dois campos têm cursor de mãozinha e dica: um rótulo de barra de status
+normalmente não faz nada ao ser clicado, então sem essa pista ninguém tentaria.
+
 ## Codificação: dois verbos diferentes
 
 O menu **Codificação** tem duas coisas que costumam ser confundidas, e a
