@@ -24,13 +24,13 @@ from tfedit import (APP, AUTOR, VERSAO, busca, codificacao,
 from tfedit.linguagens import registro as registro_de_linguagens
 from tfedit.gravacao import FalhaNaTroca, SemEspaco
 from tfedit.original import ArquivoMudou
-from tfedit.interface.aba import Aba
+from tfedit.interface.aba import Aba, NaoEPlanilha
 from tfedit.interface.barra_busca import BarraDeBusca
 
 log = log_interno.obter(__name__)
 
 FILTRO = ("Arquivos de texto (*.txt *.log *.csv *.dat *.json *.xml *.sql "
-          "*.md);;Todos os arquivos (*)")
+          "*.md);;Planilhas (*.xlsx *.xlsm);;Todos os arquivos (*)")
 
 #: Teto de substituicoes de uma vez. Trocar 3 milhoes de ocorrencias uma a uma
 #: na tabela de pecas levaria muito tempo com a interface parada; o teto
@@ -174,7 +174,10 @@ class JanelaPrincipal(QMainWindow):
         grupo = QActionGroup(menu)
         grupo.setExclusive(True)
         for nome in ("texto", "hex", "tabela", "planilha"):
-            if nome != "texto" and not self._pode_abrir_view(aba, nome):
+            # "texto" tambem passa pela conferencia: uma aba de planilha nao
+            # tem editor, e oferecer "Texto" nela levaria a um widget que nao
+            # existe.
+            if not self._pode_abrir_view(aba, nome):
                 continue
             acao = menu.addAction(ROTULO_DA_VIEW[nome])
             acao.setCheckable(True)
@@ -189,8 +192,18 @@ class JanelaPrincipal(QMainWindow):
         O menu não lista o que não abre: uma entrada que não faz nada ao ser
         clicada é pior que uma entrada ausente.
         """
+        if nome == "texto":
+            return aba.tem_view("texto")
+        if aba.e_planilha:
+            return nome == "planilha"
         if nome == "hex":
             return True
+        if aba.e_planilha:
+            # Numa planilha so' existe a grade: as outras views leem da tabela
+            # de pecas, que aqui nao existe.
+            return nome == "planilha"
+        if nome == "planilha":
+            return False
         if nome == "tabela":
             # Enquanto a varredura corre, o total de linhas ainda cresce: a
             # grade abriria mostrando uma fracao do arquivo. E uma coluna so'
@@ -616,6 +629,20 @@ class JanelaPrincipal(QMainWindow):
 
         try:
             aba = Aba(caminho, self.cfg, self, tema=self.tema)
+        except NaoEPlanilha as exc:
+            # A extensao prometia planilha e o conteudo nao e' uma. Abrir como
+            # arquivo comum e' melhor que recusar: a pessoa ao menos ve' o que
+            # ha' ali dentro.
+            log.warning("%s", exc)
+            QMessageBox.warning(
+                self, "Não é uma planilha",
+                f"{exc}<br><br>Ele será aberto como arquivo comum.")
+            try:
+                aba = Aba(caminho, {**self.cfg, "limite_planilha_mb": 0},
+                          self, tema=self.tema)
+            except OSError as outro:
+                QMessageBox.warning(self, "Não foi possível abrir", str(outro))
+                return False
         except OSError as exc:
             log.warning("nao foi possivel abrir %s: %s", caminho, exc)
             QMessageBox.warning(self, "Não foi possível abrir", str(exc))
@@ -637,7 +664,7 @@ class JanelaPrincipal(QMainWindow):
             self.barra.showMessage(
                 f"{aba.nome}: indexando... dá para ler e rolar; editar libera "
                 f"no fim.")
-        else:
+        elif not aba.e_planilha:
             self._ao_terminar_indice(aba.original.total_de_linhas)
         return True
 
@@ -683,9 +710,14 @@ class JanelaPrincipal(QMainWindow):
         aba = self.aba_atual
         if aba is None:
             return
-        self.rotulo_codec.setText(
-            f"{aba.perfil.rotulo}  {aba.perfil.rotulo_eol}")
-        self.rotulo_linguagem.setText(aba.nome_da_linguagem)
+        if aba.e_planilha:
+            # Codificacao e linguagem nao significam nada num pacote ZIP.
+            self.rotulo_codec.clear()
+            self.rotulo_linguagem.clear()
+        else:
+            self.rotulo_codec.setText(
+                f"{aba.perfil.rotulo}  {aba.perfil.rotulo_eol}")
+            self.rotulo_linguagem.setText(aba.nome_da_linguagem)
         self._atualizar_rotulo_view()
         self._mostrar_posicao(aba.linha_atual(), 0)
         self.progresso.setVisible(aba.indexando_agora)
@@ -937,6 +969,11 @@ class JanelaPrincipal(QMainWindow):
         if aba.view_atual() == "hex":
             self._ir_para_deslocamento(aba)
             return
+        if aba.e_planilha:
+            self.barra.showMessage(
+                "Numa planilha, use as teclas de seta ou role até a célula.",
+                6000)
+            return
         total = aba.documento.total_de_linhas
         numero, ok = QInputDialog.getInt(
             self, "Ir para linha", f"Linha (1 a {total:,}):".replace(",", "."),
@@ -982,6 +1019,11 @@ class JanelaPrincipal(QMainWindow):
         de cada linha, e `_substituir_todas` mexe direto na tabela de pecas.
         Recusar em silencio seria pior que voltar para o texto avisando.
         """
+        if aba.e_planilha:
+            self.barra.showMessage(
+                f"{o_que} não funciona numa planilha. Use a busca do Excel "
+                f"depois de salvar.", 8000)
+            return False
         view = aba.view_atual()
         if view == "texto":
             return True
@@ -1029,6 +1071,16 @@ class JanelaPrincipal(QMainWindow):
     def _mostrar_posicao(self, linha: int, coluna: int) -> None:
         aba = self.aba_atual
         if aba is None:
+            return
+        if aba.e_planilha:
+            # Numa planilha a posicao e' a CELULA, e nao (linha, coluna) de
+            # texto. E nao ha' "editado: X KB": a pasta inteira ja' esta' na
+            # memoria por construcao, entao o numero nao diria nada.
+            from tfedit.planilha.valores import letra_de_coluna
+
+            self.rotulo_posicao.setText(
+                f"Célula {letra_de_coluna(coluna + 1)}{linha + 1}")
+            self.rotulo_memoria.clear()
             return
         total = aba.documento.total_de_linhas
         self.rotulo_posicao.setText(

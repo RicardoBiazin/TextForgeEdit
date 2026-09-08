@@ -9,6 +9,12 @@
 PySide6-Essentials>=6.9,<7
 
 # Deteccao de encoding. MIT, ao contrario do chardet (LGPL). Puro Python.
+# Planilhas .xlsx. Usado SOMENTE para LER: a gravacao e' um patch nos bytes do
+# proprio pacote ZIP (ver tfedit/planilha/gravador.py), justamente para nao
+# perder formatacao, grafico e tabela dinamica ao regravar. Arrasta et_xmlfile
+# (~18 KB) e nada mais -- pandas e numpy continuam nos excludes do .spec.
+openpyxl==3.1.5
+
 charset-normalizer>=3.4,<4
 
 # Empacotamento. So' de desenvolvimento; nao vai dentro do .exe.

@@ -69,6 +69,7 @@ Já dá para abrir, digitar e salvar:
 | `tfedit/conversao.py` — reinterpretar e converter a codificação | pronto |
 | `tfedit/interface/visualizadores/` — views: hexadecimal e grade CSV | pronto |
 | `tfedit/csv_dialeto.py` — detecção de separador, aspas e cabeçalho | pronto |
+| `tfedit/planilha/` — .xlsx: leitura e gravação por patch no ZIP | pronto |
 
 **Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
 começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
@@ -135,6 +136,31 @@ quebra de linha; descobrir isso exigiria varrer do byte 0. Então aqui uma linha
 editáveis**, com a explicação na dica. Não se corrompe o que não se consegue
 analisar. O cabeçalho também não ordena: um clique acionaria a leitura do
 arquivo inteiro.
+
+## Planilhas .xlsx
+
+Um `.xlsx` **não é texto** — é um ZIP de XML. Não tem linha, nem fim de linha,
+nem codificação, e indexar 100 MB de ZIP contando `
+` produziria um número sem
+sentido. Por isso uma aba de planilha **não cria** mmap, índice nem tabela de
+peças: `editor`, `documento` e `original` ficam `None`, e a única visualização é
+a grade.
+
+O princípio que se mantém é o mesmo, um formato acima: **o que ninguém tocou sai
+como entrou**. Abrir e salvar sem editar devolve o arquivo byte a byte — o
+pacote original nem é recomprimido. Editar uma célula vira um *patch* nos bytes
+daquela célula, dentro do ZIP remontado na ordem original.
+
+Isso não é preciosismo. Uma planilha regravada do zero perde formatação,
+gráficos e tabelas dinâmicas — e o Excel costuma abrir assim mesmo, sem avisar
+que o arquivo empobreceu. O teste verifica que o formato de moeda da coluna
+sobrevive à edição de uma célula vizinha.
+
+**O teto de tamanho é consequência, não descuido.** Como a pasta inteira vai
+para a memória, o tamanho é conferido por `stat` **antes** de ler um byte. Acima
+de 100 MB o arquivo abre como arquivo comum, onde as garantias de memória do
+editor voltam a valer. Um `.zip` renomeado para `.xlsx` também é recusado — a
+detecção olha o conteúdo.
 
 ## O rodapé é interativo
 

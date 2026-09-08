@@ -25,6 +25,8 @@ UM_ARQUIVO = bool(os.environ.get("TFEDIT_UM_ARQUIVO"))
 hiddenimports = [
     # Import tardio, dentro de funcao: a analise estatica nao alcanca.
     "charset_normalizer",
+    # Idem: `planilha/leitor.py` so' importa openpyxl quando abre uma planilha.
+    "openpyxl",
 ]
 
 excludes = [

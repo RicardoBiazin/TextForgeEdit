@@ -154,6 +154,39 @@ def gravar(caminho, documento: Documento, *, antes_de_trocar=None,
     return escritos
 
 
+def gravar_bytes(caminho, dados: bytes) -> int:
+    """Grava bytes prontos, com a MESMA troca atomica do resto.
+
+    Existe para a planilha: um `.xlsx` nao passa por `Documento` -- nao tem
+    linhas, nao tem fatia, e a gravacao dele e' um patch nos bytes do proprio
+    pacote ZIP (ver `planilha/gravador.py`). O que ele precisa daqui e' o que
+    vale de verdade nesta gravacao: conferir espaco ANTES do primeiro byte,
+    escrever num temporario ao lado e trocar com `ReplaceFileW`, que preserva
+    dono, ACLs e fluxos alternativos do arquivo original.
+
+    Reescrever essa parte no modulo da planilha seria ter duas gravacoes
+    atomicas para manter em dia -- e a segunda sempre atrasada.
+    """
+    alvo = pathlib.Path(caminho)
+    conferir_espaco(alvo, len(dados))
+    temporario = alvo.with_name(alvo.name + SUFIXO)
+    try:
+        with open(temporario, "wb") as saida:
+            saida.write(dados)
+            saida.flush()
+            os.fsync(saida.fileno())
+    except BaseException:
+        _remover(temporario)
+        raise
+
+    try:
+        _trocar(temporario, alvo)
+    finally:
+        _remover(temporario)
+    log.info("gravado %s (%d bytes, conteudo pronto)", alvo, len(dados))
+    return len(dados)
+
+
 def _remover(caminho: pathlib.Path) -> None:
     if caminho.exists():
         try:

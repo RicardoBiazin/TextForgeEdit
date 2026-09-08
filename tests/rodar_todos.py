@@ -51,6 +51,8 @@ SUITES = [
      "realce de sintaxe na fatia: 24 linguagens e a semente de contexto"),
     ("teste_csv_dialeto.py",
      "dialeto de CSV: delimitador pela consistencia, nao pela frequencia"),
+    ("teste_planilha.py",
+     "planilha .xlsx: patch nos bytes do ZIP, formato preservado"),
     ("teste_visualizadores.py",
      "views: hexadecimal e grade de CSV sobre a tabela de pecas"),
     ("teste_janela_principal.py",

@@ -11,6 +11,17 @@ Juntar isso numa classe, em vez de deixar na janela principal, e' o que torna
 "varias abas" uma lista em vez de uma reescrita: a janela passa a conduzir abas,
 e nao arquivos.
 
+DOIS CAMINHOS DE CONSTRUCAO, e o segundo nao e' um caso especial mal resolvido:
+
+Um `.xlsx` NAO E' TEXTO. Nao tem linhas, nao tem fim de linha, nao tem
+codificacao -- e' um ZIP de XML. O mmap, o indice esparso e a tabela de pecas
+nao se aplicam a ele, e indexar 100 MB de ZIP contando "\n" seria trabalho
+jogado fora para produzir um numero sem sentido.
+
+Entao a planilha nao cria nada disso: `original`, `documento`, `janela` e
+`editor` ficam None, e a unica view registrada e' a grade. E' o mesmo desenho
+do projeto irmao, onde `Documento.abrir()` ramifica por modo.
+
 REGRA DE IDENTIDADE: uma aba por ARQUIVO, comparada por caminho resolvido e em
 caixa baixa. Duas abas do mesmo arquivo produziriam duas versoes divergentes, e
 uma delas se perderia no primeiro salvamento -- no Windows o mesmo arquivo chega
@@ -28,7 +39,7 @@ from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 from tfedit import (codificacao, conversao, linguagens,
                     log_interno)
 from tfedit.linguagens import registro as registro_de_linguagens
-from tfedit.gravacao import gravar
+from tfedit.gravacao import gravar, gravar_bytes
 from tfedit.interface.editor import EditorDeslizante
 from tfedit.interface.indexador import PARTIDA, Indexador
 from tfedit.janela import JanelaViva
@@ -36,6 +47,14 @@ from tfedit.original import ArquivoMudou, Original
 from tfedit.pecas import Documento
 
 log = log_interno.obter(__name__)
+
+#: Extensoes que fazem a aba TENTAR abrir como planilha. O conteudo e' que
+#: decide de fato -- um .zip renomeado nao passa por `parece_planilha`.
+EXTENSOES_DE_PLANILHA = frozenset({".xlsx", ".xlsm"})
+
+
+class NaoEPlanilha(ValueError):
+    """A extensao prometia planilha e o conteudo nao e' uma."""
 
 
 class Aba(QWidget):
@@ -55,6 +74,14 @@ class Aba(QWidget):
         super().__init__(parent)
         self.cfg = cfg or {}
         self.caminho = pathlib.Path(caminho)
+        self.tema = tema
+        self.planilha = None
+        self._dialeto = None
+
+        if self._parece_planilha():
+            self._montar_planilha()
+            return
+
         self.original = Original(self.caminho)
         self.original.ocioso_apos = float(
             self.cfg.get("soltar_arquivo_apos_s", 20))
@@ -129,6 +156,76 @@ class Aba(QWidget):
                  self.original.tamanho, self.perfil.rotulo,
                  self.perfil.rotulo_eol)
 
+    # ==================================================================
+    # Planilha
+    # ==================================================================
+
+    def _parece_planilha(self) -> bool:
+        """Vale a pena tentar abrir como planilha?
+
+        A extensao decide se tentamos; o CONTEUDO decide se conseguimos. E o
+        tamanho e' conferido por `stat`, ANTES de ler um byte: a leitura de uma
+        planilha traz o arquivo inteiro para a memoria, e descobrir que ele nao
+        cabia depois de le-lo e' o pior momento possivel.
+        """
+        if self.caminho.suffix.lower() not in EXTENSOES_DE_PLANILHA:
+            return False
+        teto = int(self.cfg.get("limite_planilha_mb", 100)) * 1024 * 1024
+        try:
+            tamanho = self.caminho.stat().st_size
+        except OSError:
+            return False
+        if tamanho > teto:
+            log.info("%s tem %.1f MB e passa do limite de planilha (%d MB); "
+                     "abrindo como arquivo comum", self.nome,
+                     tamanho / (1024 * 1024), teto // (1024 * 1024))
+            self.planilha_grande_demais = tamanho
+            return False
+        return True
+
+    def _montar_planilha(self) -> None:
+        """Abre como planilha. Levanta `NaoEPlanilha` quando nao da'."""
+        from tfedit.planilha import deteccao, leitor
+
+        dados = self.caminho.read_bytes()
+        if not deteccao.parece_planilha(dados):
+            raise NaoEPlanilha(
+                f"{self.nome} tem extensão de planilha, mas o conteúdo não é "
+                f"um pacote .xlsx válido.")
+
+        self.planilha = leitor.abrir(self.caminho, self.cfg, dados)
+        self.original = None
+        self.documento = None
+        self.janela = None
+        self.editor = None
+        self.perfil = None
+        self.provedor = None
+        self.visualizador_sugerido = "planilha"
+        self.indexador = None
+
+        from tfedit.interface.visualizadores.planilha import GradePlanilha
+
+        grade = GradePlanilha(self.planilha, self, tema=self.tema,
+                              cfg=self.cfg)
+        grade.sujou.connect(self.titulo_mudou)
+        self.pilha = QStackedWidget(self)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        layout.addWidget(self.pilha)
+        self.pilha.addWidget(grade)
+        # Sem a view "texto": mostrar um ZIP decodificado como texto seria
+        # rabisco, e um comando de edicao caindo nele nao teria significado.
+        self._views: dict[str, QWidget] = {"planilha": grade}
+
+        log.info("aberta planilha %s (%d bytes, %d aba(s)%s)", self.caminho,
+                 len(self.planilha.bytes_originais), len(self.planilha.folhas),
+                 ", somente leitura" if self.planilha.somente_leitura else "")
+
+    @property
+    def e_planilha(self) -> bool:
+        return self.planilha is not None
+
     def _soltar_se_ocioso(self) -> None:
         # Enquanto a varredura corre, o worker esta' lendo do mmap: fecha-lo
         # levantaria na thread de disco.
@@ -162,6 +259,8 @@ class Aba(QWidget):
 
     @property
     def modificado(self) -> bool:
+        if self.e_planilha:
+            return self.planilha.alterado
         return self.documento.alterado or self.editor.sujo
 
     @property
@@ -184,6 +283,8 @@ class Aba(QWidget):
 
     @property
     def indexando_agora(self) -> bool:
+        if self.e_planilha:
+            return False
         return not self.original.indexacao_completa
 
     # ==================================================================
@@ -198,6 +299,8 @@ class Aba(QWidget):
         """
         self.sincronizar()
         alvo = pathlib.Path(destino) if destino else self.caminho
+        if self.e_planilha:
+            return self._salvar_planilha(alvo)
         mesmo_arquivo = self.chave_de(alvo) == self.chave()
 
         if mesmo_arquivo and not self.documento.alterado:
@@ -313,11 +416,24 @@ class Aba(QWidget):
             return self.editor.sincronizar()
         return self._views[atual].sincronizar()
 
+    def view_atual(self) -> str:
+        atual = self.pilha.currentWidget()
+        for nome, widget in self._views.items():
+            if widget is atual:
+                return nome
+        return next(iter(self._views), "texto")
+
     def linha_atual(self) -> int:
         atual = self.view_atual()
         if atual == "texto":
             return self.editor.linha_atual_no_documento()
         return self._views[atual].linha_atual()
+
+    def total_de_linhas(self) -> int:
+        """Para os dialogos que perguntam "linha 1 a quantas?"."""
+        if self.e_planilha:
+            return 0
+        return self.documento.total_de_linhas
 
     def ir_para_linha(self, linha: int) -> None:
         atual = self.view_atual()
@@ -437,6 +553,24 @@ class Aba(QWidget):
                  self.nome, alvo.rotulo, escritos, self.perfil.rotulo)
         return escritos
 
+    def _salvar_planilha(self, alvo: pathlib.Path) -> int:
+        """Grava o .xlsx. Sem edicao, devolve os bytes ORIGINAIS intactos.
+
+        `bytes_para_salvar()` de uma pasta nao alterada devolve o pacote
+        original sem nem recomprimir -- e' o equivalente, aqui, da peca
+        ORIGINAL que a gravacao por streaming copia byte a byte.
+        """
+        if alvo == self.caminho and not self.planilha.alterado:
+            log.info("nada a gravar em %s", alvo)
+            return 0
+
+        dados = self.planilha.bytes_para_salvar()
+        escritos = gravar_bytes(alvo, dados)
+        self.planilha.confirmar_gravacao(dados)
+        self.caminho = alvo
+        self.titulo_mudou.emit()
+        return escritos
+
     # ==================================================================
     # Fim de vida
     # ==================================================================
@@ -447,6 +581,14 @@ class Aba(QWidget):
         A ordem importa: fechar o mmap com o worker lendo dele levanta na thread
         de disco. `parar()` espera a thread sair.
         """
+        if self.e_planilha:
+            for nome in list(self._views):
+                widget = self._views.pop(nome)
+                widget.encerrar()
+                widget.setParent(None)
+                widget.deleteLater()
+            log.info("fechada planilha %s", self.nome)
+            return
         if getattr(self, "_relogio", None) is not None:
             self._relogio.stop()
         if self.indexador is not None:

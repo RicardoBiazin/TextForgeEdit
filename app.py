@@ -35,6 +35,9 @@ OBRIGATORIOS = (
     "tfedit.interface.visualizadores.base",
     "tfedit.interface.visualizadores.hex",
     "tfedit.interface.visualizadores.grade_csv", "tfedit.csv_dialeto",
+    "tfedit.interface.visualizadores.planilha",
+    "tfedit.planilha", "tfedit.planilha.leitor", "tfedit.planilha.gravador",
+    "openpyxl",
 )
 
 
