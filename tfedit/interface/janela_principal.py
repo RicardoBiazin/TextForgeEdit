@@ -46,6 +46,14 @@ TETO_DE_SUBSTITUICOES = 100_000
 #: honesto que selecionar o arquivo inteiro para depois recusar copiar.
 SO_LEITURA_NA_VIEW = {"copy": "copiar"}
 
+#: Comandos de EDICAO que uma view editavel atende, e o nome que ela usa.
+#:
+#: Sem este mapa, o Ctrl+Z com a grade na frente caia na mensagem "este comando
+#: e' do editor de texto" -- inclusive no CSV, onde o desfazer EXISTIA na tabela
+#: de pecas e so' nao era alcancado. Reusa os mesmos atalhos em vez de inventar
+#: um segundo Ctrl+Z por visualizacao.
+EDICAO_NA_VIEW = {"undo": "desfazer", "redo": "refazer"}
+
 #: Como cada view se chama para o usuario.
 ROTULO_DA_VIEW = {"texto": "Texto", "hex": "Hexadecimal",
                   "tabela": "Tabela", "planilha": "Planilha"}
@@ -1268,6 +1276,14 @@ class JanelaPrincipal(QMainWindow):
             return
 
         widget = aba.view(view)
+        if getattr(widget, "editavel", False):
+            equivalente = EDICAO_NA_VIEW.get(metodo)
+            if equivalente is not None and hasattr(widget, equivalente):
+                getattr(widget, equivalente)()
+                self._atualizar_titulos()
+                self._mostrar_posicao(aba.linha_atual(), 0)
+                return
+
         equivalente = SO_LEITURA_NA_VIEW.get(metodo)
         if equivalente is not None and hasattr(widget, equivalente):
             getattr(widget, equivalente)()

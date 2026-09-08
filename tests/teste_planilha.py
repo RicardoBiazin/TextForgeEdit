@@ -294,6 +294,102 @@ def testar_comando_de_texto_nao_quebra() -> None:
             _encerrar(janela)
 
 
+
+def testar_desfazer_na_planilha() -> None:
+    secao("*** Ctrl+Z numa planilha volta a celula ***")
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta)
+        janela = _abrir(pasta, alvo)
+        try:
+            aba = janela.aba_atual
+            modelo = aba.view("planilha").tabela.model()
+            antes = modelo.data(modelo.index(1, 0))
+
+            checa(not aba.planilha.pode_desfazer,
+                  "recem-aberta, nao ha' o que desfazer")
+
+            modelo.setData(modelo.index(1, 0), "TROCADO")
+            checa_igual(modelo.data(modelo.index(1, 0)), "TROCADO",
+                        "a celula mudou")
+            checa(aba.planilha.pode_desfazer, "e ha' o que desfazer")
+
+            # A TECLA e' o que importa: o comando de menu passa pelo despacho
+            # por view ativa, e era justamente ali que o Ctrl+Z se perdia.
+            janela._no_editor("undo")
+            checa_igual(modelo.data(modelo.index(1, 0)), antes,
+                        "*** e o Ctrl+Z devolveu o valor anterior ***")
+            checa(not aba.planilha.alterado,
+                  "*** e a planilha voltou a se declarar NAO alterada ***")
+
+            janela._no_editor("redo")
+            checa_igual(modelo.data(modelo.index(1, 0)), "TROCADO",
+                        "refazer traz de volta")
+        finally:
+            _encerrar(janela)
+
+
+def testar_desfazer_restaura_celula_que_nao_existia() -> None:
+    secao("*** Desfazer numa celula VAZIA nao deixa celula vazia para tras ***")
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta, linhas=5)
+        janela = _abrir(pasta, alvo)
+        try:
+            aba = janela.aba_atual
+            folha = aba.planilha.folhas[0]
+            linhas_antes, colunas_antes = folha.linhas, folha.colunas
+
+            # Uma celula ALEM do fim dos dados: ela nao existe no dicionario, e
+            # `definir` faz a aba crescer para caber.
+            modelo = aba.view("planilha").tabela.model()
+            longe = modelo.index(linhas_antes + 3, colunas_antes + 2)
+            modelo.setData(longe, "NOVO")
+            checa(folha.linhas > linhas_antes and folha.colunas > colunas_antes,
+                  f"a aba cresceu para {folha.linhas}x{folha.colunas}")
+
+            janela._no_editor("undo")
+            checa_igual((folha.linhas, folha.colunas),
+                        (linhas_antes, colunas_antes),
+                        "*** e desfazer devolveu as dimensoes: senao a grade "
+                        "ficaria com linhas em branco que ninguem criou ***")
+            checa((linhas_antes + 4, colunas_antes + 3) not in folha.celulas,
+                  "*** a celula sumiu do dicionario, em vez de ficar vazia: "
+                  "'nao existia' e diferente de 'existia vazia' ***")
+            checa(not aba.planilha.alterado, "e a pasta esta' limpa de novo")
+        finally:
+            _encerrar(janela)
+
+
+def testar_gravar_zera_o_desfazer() -> None:
+    secao("*** Gravar apaga a pilha, e nao pode ser diferente ***")
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta)
+        janela = _abrir(pasta, alvo)
+        try:
+            aba = janela.aba_atual
+            modelo = aba.view("planilha").tabela.model()
+            modelo.setData(modelo.index(1, 0), "GRAVADO")
+            aba.salvar()
+
+            checa(not aba.planilha.pode_desfazer,
+                  "*** depois de gravar nao ha' o que desfazer ***")
+            checa(not aba.planilha.alterado, "e a pasta esta' limpa")
+
+            # Um passo guarda "esta celula estava suja com tal texto". Desfazer
+            # sobre o estado ja' gravado remarcaria como PENDENTE uma celula que
+            # foi para o disco, e a pasta passaria a se dizer alterada sem ter
+            # mudado nada.
+            janela._no_editor("undo")
+            checa(not aba.planilha.alterado,
+                  "*** e um Ctrl+Z depois de gravar nao ressuscita pendencia ***")
+            checa_igual(modelo.data(modelo.index(1, 0)), "GRAVADO",
+                        "o valor gravado continua na tela")
+        finally:
+            _encerrar(janela)
+
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -312,6 +408,9 @@ def main() -> int:
     testar_zip_renomeado_e_recusado()
     testar_menu_so_oferece_a_planilha()
     testar_comando_de_texto_nao_quebra()
+    testar_desfazer_na_planilha()
+    testar_desfazer_restaura_celula_que_nao_existia()
+    testar_gravar_zera_o_desfazer()
     return resumir()
 
 

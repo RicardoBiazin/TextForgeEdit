@@ -632,6 +632,95 @@ def testar_menu_oferece_a_tabela() -> None:
             _encerrar(janela)
 
 
+
+def testar_desfazer_na_grade_csv() -> None:
+    secao("*** Ctrl+Z na grade de CSV ***")
+
+    with pasta_temporaria() as pasta:
+        linhas = ["nome;valor"] + [f"Ana {i};{i}" for i in range(40)]
+        janela, _ = _csv(pasta, "u.csv", linhas)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+            antes = grade.modelo.data(grade.modelo.index(0, 0))
+
+            grade.modelo.setData(grade.modelo.index(0, 0), "TROCADO")
+            checa_igual(grade.modelo.data(grade.modelo.index(0, 0)),
+                        "TROCADO", "a celula mudou")
+            checa_igual(aba.documento.total_de_edicoes, 1, "uma edicao")
+
+            # O desfazer SEMPRE existiu aqui -- `setData` grava por
+            # `documento.substituir` dentro de um `agrupar()`. O que faltava era
+            # o comando CHEGAR na grade: o despacho por view mandava o Ctrl+Z
+            # para a mensagem "este comando e' do editor de texto".
+            janela._no_editor("undo")
+            checa_igual(grade.modelo.data(grade.modelo.index(0, 0)), antes,
+                        "*** e o Ctrl+Z devolveu o valor anterior ***")
+            checa_igual(aba.documento.total_de_edicoes, 0,
+                        "*** e a tabela de pecas voltou a zero ***")
+
+            janela._no_editor("redo")
+            checa_igual(grade.modelo.data(grade.modelo.index(0, 0)),
+                        "TROCADO", "refazer traz de volta")
+        finally:
+            _encerrar(janela)
+
+
+def testar_desfazer_esquece_o_cache_da_grade() -> None:
+    secao("*** Desfazer fora da tela tambem tem de aparecer ***")
+
+    with pasta_temporaria() as pasta:
+        # Mais de um bloco de cache (BLOCO = 256), para a linha editada ficar
+        # num bloco diferente do que esta' na tela.
+        linhas = ["nome;valor"] + [f"Ana {i};{i}" for i in range(800)]
+        janela, _ = _csv(pasta, "longo.csv", linhas)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+
+            longe = grade.modelo.index(600, 0)
+            antes = grade.modelo.data(longe)
+            grade.modelo.setData(longe, "LA LONGE")
+            checa_igual(grade.modelo.data(longe), "LA LONGE", "editou longe")
+
+            # Traz um bloco DIFERENTE para o cache, para provar que o desfazer
+            # nao depende de a linha editada estar em memoria.
+            grade.modelo.data(grade.modelo.index(0, 0))
+            janela._no_editor("undo")
+
+            checa_igual(grade.modelo.data(longe), antes,
+                        "*** o desfazer aparece mesmo com o cache cheio de "
+                        "outro bloco ***")
+            checa_igual(grade.linha_atual(), 601,
+                        "*** e a grade leva o cursor ate' onde a mudanca "
+                        "aconteceu, em vez de desfazer em silencio ***")
+        finally:
+            _encerrar(janela)
+
+
+def testar_desfazer_sem_nada_explica() -> None:
+    secao("Ctrl+Z sem nada a desfazer explica")
+
+    with pasta_temporaria() as pasta:
+        linhas = ["a;b"] + [f"{i};{i}" for i in range(30)]
+        janela, _ = _csv(pasta, "vazio.csv", linhas)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+
+            recusas = []
+            grade.recusou.connect(recusas.append)
+            grade.desfazer()
+            checa(recusas and "desfazer" in recusas[0],
+                  f"explica em vez de nao fazer nada: {recusas}")
+            checa(not aba.documento.alterado, "e nada foi alterado")
+        finally:
+            _encerrar(janela)
+
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -657,6 +746,9 @@ def main() -> int:
     testar_registro_de_varias_linhas_e_sinalizado()
     testar_grade_nao_edita_durante_a_varredura()
     testar_menu_oferece_a_tabela()
+    testar_desfazer_na_grade_csv()
+    testar_desfazer_esquece_o_cache_da_grade()
+    testar_desfazer_sem_nada_explica()
     return resumir()
 
 

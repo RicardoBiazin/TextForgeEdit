@@ -63,6 +63,10 @@ DLLS_DESNECESSARIAS = [
 # Traducao do Qt para portugues do Brasil. Sem estes .qm, os botoes dos
 # dialogos padrao ("Save", "Discard", "Cancel", "Open") aparecem em ingles no
 # meio de uma janela em portugues -- e o PyInstaller NAO os inclui sozinho.
+RAIZ_ICONES = pathlib.Path("tfedit/recursos")
+_icone_do_app = RAIZ_ICONES / "icone.ico"
+icone = str(_icone_do_app) if _icone_do_app.is_file() else None
+
 import PySide6 as _PySide6
 _traducoes = pathlib.Path(_PySide6.__file__).parent / "translations"
 datas = [(str(_traducoes / f"{c}.qm"), "traducoes")
@@ -79,6 +83,15 @@ if not _json:
     raise SystemExit("[TextForgeEdit] tfedit/recursos/temas/ vazio: o .exe "
                      "sairia sem realce. Empacotamento abortado.")
 datas += [(str(a), "tfedit/recursos/temas") for a in _json]
+
+# Os icones. O do APLICATIVO vai embutido no .exe (`icon=` abaixo); o do TIPO DE
+# ARQUIVO precisa existir como ARQUIVO no disco, porque o `DefaultIcon` do
+# registro aponta para um caminho -- nao da' para apontar para algo que so'
+# existe dentro do executavel com o indice certo.
+_icones = [p for p in (RAIZ_ICONES / "icone.ico",
+                       RAIZ_ICONES / "icone_arquivo.ico") if p.is_file()]
+datas += [(str(p), "tfedit/recursos") for p in _icones]
+print(f"[TextForgeEdit] {len(_icones)} icone(s) no pacote")
 print(f"[TextForgeEdit] {len(_json)} tema(s) no pacote")
 
 a = Analysis(
@@ -124,6 +137,7 @@ if UM_ARQUIVO:
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
+        icon=icone,
         version="versao.txt",
         manifest="textforgeedit.manifest",
         uac_admin=False,   # elevado, o arrastar-e-soltar do Explorer PARA
@@ -144,6 +158,7 @@ else:
         target_arch=None,
         codesign_identity=None,
         entitlements_file=None,
+        icon=icone,
         version="versao.txt",
         manifest="textforgeedit.manifest",
         uac_admin=False,

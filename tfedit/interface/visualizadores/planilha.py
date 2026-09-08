@@ -250,6 +250,41 @@ class GradePlanilha(VisualizadorDeDocumento, QWidget):
             f"selection-background-color: "
             f"{self.cor_do_tema('janela.destaque').name()}; }}")
 
+    def desfazer(self) -> None:
+        """Ctrl+Z numa planilha volta uma celula.
+
+        A pilha e' da `Pasta`, e nao do Qt: quem sabe o que a celula era antes
+        -- inclusive se ela nem existia -- e' o modelo da planilha, nao o
+        widget.
+        """
+        passo = self.pasta.desfazer()
+        self._apos_passo(passo, "Não há mais nada para desfazer.")
+
+    def refazer(self) -> None:
+        passo = self.pasta.refazer()
+        self._apos_passo(passo, "Não há mais nada para refazer.")
+
+    def _apos_passo(self, passo, recusa: str) -> None:
+        if passo is None:
+            self.recusou.emit(recusa)
+            return
+
+        # A aba do passo pode nao ser a que esta' na frente: desfazer tem de
+        # levar a pessoa ate' onde a mudanca aconteceu, senao ela ve' o atalho
+        # "nao fazer nada".
+        indice = self.pasta.folhas.index(passo.folha)
+        if self.abas.currentIndex() != indice:
+            self.abas.setCurrentIndex(indice)
+
+        modelo = self.tabela.model()
+        if modelo is not None:
+            modelo.layoutChanged.emit()
+            alvo = modelo.index(passo.linha - 1, passo.coluna - 1)
+            if alvo.isValid():
+                self.tabela.setCurrentIndex(alvo)
+                self.tabela.scrollTo(alvo)
+        self.sujou.emit()
+
     def copiar(self) -> None:
         from PySide6.QtGui import QGuiApplication
 

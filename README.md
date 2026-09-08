@@ -163,6 +163,27 @@ de 100 MB o arquivo abre como arquivo comum, onde as garantias de memória do
 editor voltam a valer. Um `.zip` renomeado para `.xlsx` também é recusado — a
 detecção olha o conteúdo.
 
+## Ícones
+
+Dois, e não um — são coisas diferentes, e o Explorer as mostra em lugares
+diferentes:
+
+```
+icone.ico            o APLICATIVO      quadrado cheio, na barra de tarefas
+icone_arquivo.ico    o TIPO DE ARQUIVO página com canto dobrado, no Explorer
+```
+
+Com um ícone só, um `.txt` associado fica com cara de **programa** na pasta, e
+não dá para saber olhando se aquilo é o editor ou um arquivo dele.
+
+Mesma família visual do TextForge — fundo ardósia, três linhas de texto — com o
+vinco lateral em **azul** no lugar do laranja-brasa. Cor separa melhor que forma
+a 16 px, que é o tamanho em que o ícone mais aparece.
+
+`ferramentas/gerar_icone.py` regera os dois **sem Pillow**: os `.ico` são
+versionados justamente para o build funcionar numa máquina que não o tenha, e um
+gerador que exigisse Pillow anularia isso.
+
 ## Associar às extensões do Windows
 
 ```powershell

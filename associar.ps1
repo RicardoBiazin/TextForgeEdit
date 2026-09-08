@@ -244,6 +244,29 @@ if (-not $Exe -or -not (Test-Path $Exe)) {
 }
 $Exe = (Resolve-Path $Exe).Path
 
+# O icone do TIPO DE ARQUIVO, que e' diferente do icone do programa.
+#
+# Sem isto, um `.txt` associado aparece no Explorer com o simbolo do EDITOR --
+# e a pessoa nao sabe, olhando a pasta, se aquilo e' o programa ou um arquivo
+# dele. Com a variante de pagina, o arquivo parece um arquivo.
+#
+# Procura ao lado do executavel (build one-dir, dentro de `_internal`) e depois
+# na arvore de fontes. Nao achando, cai no icone do proprio .exe -- que e' o
+# comportamento antigo, e continua correto.
+$PastaDoExe = Split-Path -Parent $Exe
+$IconeDoArquivo = @(
+    (Join-Path $PastaDoExe "_internal\tfedit\recursos\icone_arquivo.ico"),
+    (Join-Path $PastaDoExe "tfedit\recursos\icone_arquivo.ico"),
+    (Join-Path $Raiz "tfedit\recursos\icone_arquivo.ico")
+) | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+
+if ($IconeDoArquivo) {
+    $IconeDoArquivo = (Resolve-Path $IconeDoArquivo).Path
+    $ExpressaoDoIcone = "`"$IconeDoArquivo`""
+} else {
+    $ExpressaoDoIcone = "`"$Exe`",0"
+}
+
 if (-not $Extensoes -or $Extensoes.Count -eq 0) {
     Escrever "Nenhuma extensao informada." "Yellow"
     Escrever ""
@@ -266,9 +289,16 @@ Escrever ""
 $comando = "`"$Exe`" `"%1`""
 
 # 1. O ProgID: o "tipo de arquivo" do TextForgeEdit.
+if ($IconeDoArquivo) {
+    Escrever "Ícone dos arquivos: $IconeDoArquivo" "Cyan"
+} else {
+    Escrever "Ícone dos arquivos: o do próprio executável (icone_arquivo.ico não encontrado)" "DarkYellow"
+}
+Escrever ""
+
 Escrever "1. ProgID $ProgID"
 Definir-Chave "HKCU:\Software\Classes\$ProgID" $null "Arquivo de texto (TextForgeEdit)"
-Definir-Chave "HKCU:\Software\Classes\$ProgID\DefaultIcon" $null "`"$Exe`",0"
+Definir-Chave "HKCU:\Software\Classes\$ProgID\DefaultIcon" $null $ExpressaoDoIcone
 Definir-Chave "HKCU:\Software\Classes\$ProgID\shell\open\command" $null $comando
 
 # 2. O registro do aplicativo, que faz o nome aparecer bonito no "Abrir com".

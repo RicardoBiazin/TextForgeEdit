@@ -116,6 +116,15 @@ class Pasta:
         #: e' o que da' ao usuario confianca para salvar.
         self.preservadas: list[str] = []
 
+        # DESFAZER: uma pilha de passos, e nao de copias da pasta.
+        #
+        # Guardar a pasta inteira por edicao seria copiar todas as celulas de
+        # todas as abas a cada tecla. Um passo guarda o que aquela celula era --
+        # a celula anterior, se ela estava suja, e as dimensoes da aba, que
+        # `definir` faz crescer.
+        self._desfazer: list[_Passo] = []
+        self._refazer: list[_Passo] = []
+
     # ==================================================================
     # Edicao
     # ==================================================================
@@ -134,12 +143,52 @@ class Pasta:
         if atual.texto == texto:
             return False
 
+        self._desfazer.append(_Passo.do_estado(folha, linha, coluna))
+        # Um caminho NOVO apaga o futuro: refazer depois de editar por cima
+        # devolveria um estado que nunca existiu.
+        self._refazer.clear()
+
+        self._aplicar(folha, linha, coluna, texto)
+        return True
+
+    def _aplicar(self, folha: Folha, linha: int, coluna: int,
+                 texto: str) -> None:
+        atual = folha.celula(linha, coluna)
         folha.sujas[(linha, coluna)] = texto
-        nova = interpretar(texto, atual)
-        folha.celulas[(linha, coluna)] = nova
+        folha.celulas[(linha, coluna)] = interpretar(texto, atual)
         folha.linhas = max(folha.linhas, linha)
         folha.colunas = max(folha.colunas, coluna)
-        return True
+
+    # ==================================================================
+    # Desfazer e refazer
+    # ==================================================================
+
+    @property
+    def pode_desfazer(self) -> bool:
+        return bool(self._desfazer)
+
+    @property
+    def pode_refazer(self) -> bool:
+        return bool(self._refazer)
+
+    def desfazer(self) -> "_Passo | None":
+        """Volta uma edicao. Devolve o passo desfeito, para a grade repintar."""
+        if not self._desfazer:
+            return None
+        passo = self._desfazer.pop()
+        self._refazer.append(_Passo.do_estado(passo.folha, passo.linha,
+                                              passo.coluna))
+        passo.restaurar()
+        return passo
+
+    def refazer(self) -> "_Passo | None":
+        if not self._refazer:
+            return None
+        passo = self._refazer.pop()
+        self._desfazer.append(_Passo.do_estado(passo.folha, passo.linha,
+                                               passo.coluna))
+        passo.restaurar()
+        return passo
 
     def confirmar_gravacao(self, dados: bytes | None = None) -> None:
         """Os bytes do disco passaram a ser o que a grade mostra.
@@ -158,6 +207,12 @@ class Pasta:
         self.bytes_originais = dados
         for folha in self.folhas:
             folha.sujas.clear()
+        # As pilhas MORREM na gravacao. Um passo guarda "esta celula estava
+        # suja com tal texto", e depois de gravar nada esta' sujo: desfazer
+        # sobre o estado novo remarcaria como pendente uma celula que ja' foi
+        # para o disco, e a pasta passaria a se dizer alterada sem ter mudado.
+        self._desfazer.clear()
+        self._refazer.clear()
 
     # ==================================================================
     # Gravacao
@@ -172,6 +227,48 @@ class Pasta:
             return self.bytes_originais
         from tfedit.planilha import gravador
         return gravador.montar(self)
+
+
+#: Marca "esta chave NAO existia", que e' diferente de "existia vazia".
+AUSENTE = object()
+
+
+@dataclass(frozen=True)
+class _Passo:
+    """O que uma celula era antes de ser editada.
+
+    Guarda tambem `linhas` e `colunas` da aba porque `definir` faz as duas
+    crescerem: sem elas, desfazer a edicao de uma celula alem do fim deixaria a
+    grade com linhas em branco que ninguem criou.
+    """
+
+    folha: Folha
+    linha: int
+    coluna: int
+    celula: object          # Celula | AUSENTE
+    suja: object            # str | AUSENTE
+    linhas: int
+    colunas: int
+
+    @classmethod
+    def do_estado(cls, folha: Folha, linha: int, coluna: int) -> "_Passo":
+        return cls(folha=folha, linha=linha, coluna=coluna,
+                   celula=folha.celulas.get((linha, coluna), AUSENTE),
+                   suja=folha.sujas.get((linha, coluna), AUSENTE),
+                   linhas=folha.linhas, colunas=folha.colunas)
+
+    def restaurar(self) -> None:
+        chave = (self.linha, self.coluna)
+        if self.celula is AUSENTE:
+            self.folha.celulas.pop(chave, None)
+        else:
+            self.folha.celulas[chave] = self.celula
+        if self.suja is AUSENTE:
+            self.folha.sujas.pop(chave, None)
+        else:
+            self.folha.sujas[chave] = self.suja
+        self.folha.linhas = self.linhas
+        self.folha.colunas = self.colunas
 
 
 def interpretar(texto: str, anterior: Celula) -> Celula:

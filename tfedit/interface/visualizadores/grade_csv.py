@@ -438,6 +438,43 @@ class GradeCsv(VisualizadorDeDocumento, QTableView):
             self.setCurrentIndex(indice)
             self.scrollTo(indice)
 
+    def desfazer(self) -> None:
+        """Ctrl+Z na grade desfaz na TABELA DE PECAS.
+
+        O desfazer sempre existiu: `setData` grava por `documento.substituir`
+        dentro de um `agrupar()`, entao cada celula editada e' uma operacao. O
+        que faltava era o comando CHEGAR aqui -- ver `EDICAO_NA_VIEW`.
+
+        O cache tem de ser esquecido inteiro: a operacao desfeita pode ter sido
+        num bloco que nao esta' na tela, e um cache parcialmente velho mostraria
+        a celula antiga ao rolar ate' la'.
+        """
+        if not self.documento.pode_desfazer:
+            self.recusou.emit("Não há mais nada para desfazer.")
+            return
+        offset = self.documento.desfazer()
+        self._apos_desfazer(offset)
+
+    def refazer(self) -> None:
+        if not self.documento.pode_refazer:
+            self.recusou.emit("Não há mais nada para refazer.")
+            return
+        offset = self.documento.refazer()
+        self._apos_desfazer(offset)
+
+    def _apos_desfazer(self, offset) -> None:
+        self.modelo.esquecer_tudo()
+        self.sujou.emit()
+        if offset is None:
+            return
+        try:
+            linha_doc = self.documento.linha_do_offset(offset)
+        except Exception:                     # noqa: BLE001 - nunca derrubar
+            return
+        # Leva o cursor ao que acabou de mudar: desfazer uma edicao fora da tela
+        # sem mostrar onde deixa a pessoa sem saber se algo aconteceu.
+        self.ir_para_linha(linha_doc)
+
     def encerrar(self) -> None:
         VisualizadorDeDocumento.encerrar(self)
         self._relogio.stop()
