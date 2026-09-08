@@ -44,6 +44,9 @@ estão proibidos no pacote.
 | `interface/aba.py` | Uma aba por **arquivo**, comparado por caminho resolvido em caixa baixa. No Windows o mesmo arquivo chega com caixa diferente pelo Explorer, pela forma curta 8.3 e por caminho relativo — duas abas do mesmo arquivo produzem duas versões divergentes. |
 | `interface/janela_principal.py` | Salvar sem edição pendente é **no-op**. Regravar 240 MB à toa custa minutos e mexe na data do arquivo, fazendo backup e sincronizador acharem que houve mudança. |
 | testes de interface | Nunca terminar com `janela.close()` numa aba modificada: abre um `QMessageBox` modal, e em modo offscreen não há quem o feche — a suíte trava para sempre. Use o helper `encerrar()`. E `isHidden()` em vez de `isVisible()`: num teste a janela de topo nunca é exibida, e todo filho dela é "invisível". |
+| textos de interface | **Acentuados**, sempre. Comentário, docstring e log podem ser ASCII — a convenção do código é essa —, mas o que o usuário lê, não. `teste_idioma.py` varre o fonte e falha se um texto de tela voltar a ter "nao", "você" sem acento ou "codificacao". |
+| `idioma.py` | Os `QTranslator` ficam guardados no `QApplication` (`_tradutores`). Numa variável local, o coletor do Python os destrói e os textos **voltam ao inglês** segundos depois de a janela abrir — sintoma que não aponta para a causa. |
+| `TextForgeEdit.spec` | Os `.qm` de tradução entram em `datas`. O PyInstaller **não** os inclui sozinho, e sem eles o pacote sai com "Save"/"Cancel" em inglês embora rode em português do fonte. |
 | `gravacao.py` | Espaço em disco é conferido **antes** do primeiro byte. Descobrir que faltou disco depois de escrever 200 MB é o pior momento possível. |
 
 ## Ao acrescentar um recurso

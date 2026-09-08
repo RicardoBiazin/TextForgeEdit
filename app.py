@@ -23,6 +23,7 @@ OBRIGATORIOS = (
     "tfedit.interface.editor", "tfedit.interface.janela_principal",
     "tfedit.interface.indexador", "tfedit.interface.aba",
     "tfedit.interface.barra_busca", "tfedit.busca", "tfedit.log_interno",
+    "tfedit.idioma",
 )
 
 
@@ -69,11 +70,30 @@ def autoverificacao() -> int:
         import shutil
         shutil.rmtree(pasta, ignore_errors=True)
 
-    from PySide6.QtWidgets import QApplication
+    from PySide6.QtWidgets import (QApplication, QDialogButtonBox)
 
+    from tfedit import idioma
     from tfedit.interface.janela_principal import JanelaPrincipal
 
     aplicacao = QApplication.instance() or QApplication([])
+
+    # A traducao do Qt e' o caso classico de "so' quebra no pacote": os `.qm`
+    # entram por `datas` no .spec, e o PyInstaller NAO os inclui sozinho. Rodando
+    # do fonte tudo aparece em portugues; no executavel, "Save" e "Cancel"
+    # voltariam ao ingles sem ninguem perceber ate' o usuario abrir um dialogo.
+    carregados = idioma.instalar(aplicacao)
+    if "qtbase_pt_BR" not in carregados:
+        print("AUTOVERIFICACAO FALHOU: a traducao pt_BR do Qt nao carregou")
+        print("  procurado em:", [str(x) for x in idioma.pastas_de_traducao()])
+        return 1
+    caixa = QDialogButtonBox(QDialogButtonBox.StandardButton.Save
+                             | QDialogButtonBox.StandardButton.Cancel)
+    botoes = sorted(b.text().replace("&", "") for b in caixa.buttons())
+    if botoes != ["Cancelar", "Salvar"]:
+        print("AUTOVERIFICACAO FALHOU: os botoes padrao nao sairam em portugues")
+        print("  obtido:", botoes)
+        return 1
+
     janela = JanelaPrincipal()          # monta menus, barra e widgets
     janela.close()
     del aplicacao
@@ -101,8 +121,8 @@ def autoverificacao() -> int:
         import shutil as _sh
         _sh.rmtree(pasta2, ignore_errors=True)
 
-    print(f"autoverificacao OK ({len(OBRIGATORIOS)} modulos, gravacao, busca "
-          f"e janela)")
+    print(f"autoverificacao OK ({len(OBRIGATORIOS)} modulos, gravacao, "
+          f"busca, traducao e janela)")
     return 0
 
 
@@ -114,7 +134,7 @@ def main() -> int:
 
     from PySide6.QtWidgets import QApplication
 
-    from tfedit import APP, VERSAO, log_interno
+    from tfedit import APP, VERSAO, idioma, log_interno
     from tfedit.interface.janela_principal import JanelaPrincipal
 
     # O log e a captura de erro entram ANTES de qualquer widget: uma excecao na
@@ -126,6 +146,9 @@ def main() -> int:
     aplicacao = QApplication(sys.argv)
     aplicacao.setApplicationName(APP)
     aplicacao.setApplicationVersion(VERSAO)
+    # A traducao do Qt entra ANTES da primeira janela: os textos ja' montados
+    # nao sao retraduzidos sozinhos.
+    idioma.instalar(aplicacao)
 
     janela = JanelaPrincipal()
     janela.show()

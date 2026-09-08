@@ -81,9 +81,10 @@ def conferir_espaco(caminho, previsto: int) -> None:
     if livre < previsto + FOLGA:
         faltam = (previsto + FOLGA - livre) // (1024 * 1024)
         raise SemEspaco(
-            f"faltam ~{faltam} MB livres em "
-            f"{pathlib.Path(caminho).drive or 'disco'}: a gravacao atomica "
-            f"escreve um arquivo temporario do mesmo tamanho ao lado do original")
+            f"Faltam cerca de {faltam} MB livres em "
+            f"{pathlib.Path(caminho).drive or 'disco'}. A gravação "
+            f"atômica escreve um arquivo temporário do mesmo tamanho "
+            f"ao lado do original.")
 
 
 def blocos(documento: Documento, cancelar=None):
@@ -169,8 +170,8 @@ def _trocar(temporario: pathlib.Path, destino: pathlib.Path) -> None:
         except OSError as exc:
             ultimo = exc
     raise FalhaNaTroca(
-        f"nao foi possivel substituir {destino.name}: {ultimo}. "
-        f"O arquivo original NAO foi alterado.") from ultimo
+        f"Não foi possível substituir {destino.name}: {ultimo}. "
+        f"O arquivo original NÃO foi alterado.") from ultimo
 
 
 def _replace_file_w(temporario: pathlib.Path, destino: pathlib.Path) -> bool:

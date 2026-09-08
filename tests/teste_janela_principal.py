@@ -219,8 +219,8 @@ def testar_busca_pela_interface() -> None:
 
         janela.barra_busca.campo.setText("naoexiste")
         janela.barra_busca._procurar(False)
-        checa("nao encontrado" in janela.barra_busca.rotulo.text(),
-              "o que nao existe e' informado, e nao ignorado")
+        checa("não encontrado" in janela.barra_busca.rotulo.text(),
+              "o que nao existe e' informado (com acento), e nao ignorado")
 
         # Substituir a atual so' troca se o selecionado for mesmo a ocorrencia.
         janela.barra_busca.campo.setText("alvo")

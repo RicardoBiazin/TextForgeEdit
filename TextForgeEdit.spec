@@ -56,11 +56,21 @@ DLLS_DESNECESSARIAS = [
     "Qt6Pdf.dll", "Qt6Quick.dll", "Qt6Qml.dll",
 ]
 
+# Traducao do Qt para portugues do Brasil. Sem estes .qm, os botoes dos
+# dialogos padrao ("Save", "Discard", "Cancel", "Open") aparecem em ingles no
+# meio de uma janela em portugues -- e o PyInstaller NAO os inclui sozinho.
+import PySide6 as _PySide6
+_traducoes = pathlib.Path(_PySide6.__file__).parent / "translations"
+datas = [(str(_traducoes / f"{c}.qm"), "traducoes")
+         for c in ("qtbase_pt_BR", "qt_pt_BR")
+         if (_traducoes / f"{c}.qm").is_file()]
+print(f"[TextForgeEdit] {len(datas)} catalogo(s) de traducao no pacote")
+
 a = Analysis(
     ["app.py"],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],

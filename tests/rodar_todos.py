@@ -36,6 +36,8 @@ SUITES = [
      "ponta a ponta: abrir, digitar com acento, deslizar, gravar"),
     ("teste_busca.py",
      "localizar e substituir no documento inteiro, fora da fatia"),
+    ("teste_idioma.py",
+     "portugues do Brasil: acentos nos textos e nos dialogos do Qt"),
     ("teste_janela_principal.py",
      "abas, salvar como, arrastar-e-soltar, busca pela barra, log"),
 ]

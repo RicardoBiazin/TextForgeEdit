@@ -42,11 +42,11 @@ class BarraDeBusca(QWidget):
         self.campo_troca.returnPressed.connect(self._substituir)
 
         self.caixa_maiusculas = QCheckBox("Aa", self)
-        self.caixa_maiusculas.setToolTip("Diferenciar maiusculas de minusculas")
+        self.caixa_maiusculas.setToolTip("Diferenciar maiúsculas de minúsculas")
         self.caixa_palavra = QCheckBox("Palavra", self)
         self.caixa_palavra.setToolTip("Somente palavras inteiras")
         self.caixa_regex = QCheckBox(".*", self)
-        self.caixa_regex.setToolTip("Expressao regular")
+        self.caixa_regex.setToolTip("Expressão regular")
 
         self.rotulo = QLabel("", self)
 
@@ -55,9 +55,9 @@ class BarraDeBusca(QWidget):
         grade.setSpacing(6)
         grade.addWidget(QLabel("Localizar:", self), 0, 0)
         grade.addWidget(self.campo, 0, 1)
-        grade.addWidget(self._botao("↑", "Anterior (Shift+F3)",
+        grade.addWidget(self._botao("↑", "Ocorrência anterior (Shift+F3)",
                                     lambda: self._procurar(True)), 0, 2)
-        grade.addWidget(self._botao("↓", "Proxima (F3)",
+        grade.addWidget(self._botao("↓", "Próxima ocorrência (F3)",
                                     lambda: self._procurar(False)), 0, 3)
         grade.addWidget(self.caixa_maiusculas, 0, 4)
         grade.addWidget(self.caixa_palavra, 0, 5)
@@ -68,7 +68,7 @@ class BarraDeBusca(QWidget):
 
         grade.addWidget(QLabel("Substituir:", self), 1, 0)
         grade.addWidget(self.campo_troca, 1, 1)
-        grade.addWidget(self._botao("Trocar", "Substitui a ocorrencia atual",
+        grade.addWidget(self._botao("Trocar", "Substitui a ocorrência atual",
                                     self._substituir), 1, 2, 1, 2)
         grade.addWidget(self._botao("Trocar todas",
                                     "Substitui em todo o arquivo",
@@ -121,7 +121,7 @@ class BarraDeBusca(QWidget):
         if not criterio.texto:
             return
         if criterio.compilar() is None:
-            self.dizer("expressao regular invalida", erro=True)
+            self.dizer("expressão regular inválida", erro=True)
             return
         self.procurar.emit(criterio, para_tras)
 

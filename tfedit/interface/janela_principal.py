@@ -100,10 +100,10 @@ class JanelaPrincipal(QMainWindow):
         self.credito = _Credito(
             f"Produzido por {AUTOR} · v{VERSAO}",
             f"{APP} {VERSAO}\nProduzido por {AUTOR}.\n"
-            f"Clique para ver a licenca e as versoes.", self)
+            f"Clique para ver a licença e as versões.", self)
         self.credito.clicado.connect(self.sobre)
         self.barra.addPermanentWidget(self.credito)
-        self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para ca")
+        self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para cá")
 
     # ==================================================================
     # Menu
@@ -147,9 +147,9 @@ class JanelaPrincipal(QMainWindow):
              self.abrir_busca, localizar)
         acao("&Substituir...", QKeySequence.StandardKey.Replace,
              self.abrir_substituir, localizar)
-        acao("Proxima ocorrencia", "F3",
+        acao("Pró&xima ocorrência", "F3",
              lambda: self.barra_busca._procurar(False), localizar)
-        acao("Ocorrencia anterior", "Shift+F3",
+        acao("Ocorrência &anterior", "Shift+F3",
              lambda: self.barra_busca._procurar(True), localizar)
         localizar.addSeparator()
         acao("&Ir para linha...", "Ctrl+G", self.ir_para_linha, localizar)
@@ -182,14 +182,14 @@ class JanelaPrincipal(QMainWindow):
         for indice, aba in enumerate(self.todas_as_abas()):
             if aba.chave() == chave:
                 self.abas.setCurrentIndex(indice)
-                self.barra.showMessage(f"{aba.nome} ja' estava aberto", 4000)
+                self.barra.showMessage(f"{aba.nome} já estava aberto", 4000)
                 return True
 
         try:
             aba = Aba(caminho, self)
         except OSError as exc:
             log.warning("nao foi possivel abrir %s: %s", caminho, exc)
-            QMessageBox.warning(self, "Nao foi possivel abrir", str(exc))
+            QMessageBox.warning(self, "Não foi possível abrir", str(exc))
             return False
 
         aba.posicao_mudou.connect(self._mostrar_posicao)
@@ -205,7 +205,7 @@ class JanelaPrincipal(QMainWindow):
             self.progresso.setValue(0)
             self.progresso.show()
             self.barra.showMessage(
-                f"{aba.nome}: indexando... da' para ler e rolar; editar libera "
+                f"{aba.nome}: indexando... dá para ler e rolar; editar libera "
                 f"no fim.")
         else:
             self._ao_terminar_indice(aba.original.total_de_linhas)
@@ -229,14 +229,14 @@ class JanelaPrincipal(QMainWindow):
             self.rotulo_codec.clear()
             self.rotulo_memoria.clear()
             self.setWindowTitle(f"TextForgeEdit {VERSAO}")
-            self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um "
-                                   "para ca")
+            self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste "
+                                   "um para cá")
         return True
 
     def _perguntar_para_fechar(self, aba: Aba) -> bool:
         resposta = QMessageBox.question(
-            self, "Alteracoes nao salvas",
-            f"<b>{aba.nome}</b> tem alteracoes nao salvas.<br><br>"
+            self, "Alterações não salvas",
+            f"<b>{aba.nome}</b> tem alterações não salvas.<br><br>"
             f"Salvar antes de fechar?",
             QMessageBox.StandardButton.Save
             | QMessageBox.StandardButton.Discard
@@ -310,8 +310,8 @@ class JanelaPrincipal(QMainWindow):
             for outra in self.todas_as_abas():
                 if outra is not aba and outra.chave() == Aba.chave_de(caminho):
                     QMessageBox.warning(
-                        self, "Arquivo ja' aberto",
-                        f"<b>{outra.nome}</b> esta' aberto em outra aba. "
+                        self, "Arquivo já aberto",
+                        f"<b>{outra.nome}</b> está aberto em outra aba. "
                         f"Feche-a antes de salvar por cima dela.")
                     return False
         return self._gravar(aba, destino=caminho)
@@ -331,11 +331,11 @@ class JanelaPrincipal(QMainWindow):
             escritos = aba.salvar(destino)
         except SemEspaco as exc:
             log.warning("sem espaco para gravar %s: %s", aba.nome, exc)
-            QMessageBox.warning(self, "Espaco insuficiente", str(exc))
+            QMessageBox.warning(self, "Espaço insuficiente", str(exc))
             return False
         except (FalhaNaTroca, OSError) as exc:
             log.error("falha ao gravar %s: %s", aba.nome, exc)
-            QMessageBox.warning(self, "Nao foi possivel salvar", str(exc))
+            QMessageBox.warning(self, "Não foi possível salvar", str(exc))
             return False
 
         self._atualizar_titulos()
@@ -347,15 +347,16 @@ class JanelaPrincipal(QMainWindow):
                 f"Salvo: {aba.nome} ({escritos / (1024*1024):,.1f} MB)"
                 .replace(",", "."), 4000)
         else:
-            self.barra.showMessage("Nada a salvar: nenhuma alteracao pendente.",
+            self.barra.showMessage("Nada a salvar: nenhuma alteração pendente.",
                                    4000)
         return True
 
     def _avisar_indexando(self) -> None:
         QMessageBox.information(
             self, "Ainda indexando",
-            "A varredura do arquivo nao terminou. Salvar agora gravaria so' a "
-            "parte ja' conhecida.<br><br>Espere a barra de progresso sumir.")
+            "A varredura do arquivo não terminou. Salvar agora gravaria "
+            "só a parte já conhecida.<br><br>Espere a barra de progresso "
+            "sumir.")
 
     # ==================================================================
     # Localizar e substituir
@@ -394,7 +395,7 @@ class JanelaPrincipal(QMainWindow):
         achado = busca.proxima(aba.documento, criterio, aba.perfil.codec,
                                linha, coluna, para_tras=para_tras)
         if achado is None:
-            self.barra_busca.dizer("nao encontrado", erro=True)
+            self.barra_busca.dizer("não encontrado", erro=True)
             return
         self._ir_para_achado(aba, achado)
         self.barra_busca.dizer(f"linha {achado.linha + 1:,}".replace(",", "."))
@@ -446,13 +447,14 @@ class JanelaPrincipal(QMainWindow):
                                        aba.perfil.codec,
                                        teto=TETO_DE_SUBSTITUICOES)
         if not quantas:
-            self.barra_busca.dizer("nao encontrado", erro=True)
+            self.barra_busca.dizer("não encontrado", erro=True)
             return
-        aviso = (f"<b>{quantas:,}</b> ocorrencia(s) de "
-                 f"<b>{criterio.texto}</b> serao substituidas.".replace(",", "."))
+        aviso = (f"<b>{quantas:,}</b> ocorrência(s) de "
+                 f"<b>{criterio.texto}</b> serão substituídas."
+                 .replace(",", "."))
         if cortou:
-            aviso += (f"<br><br>O arquivo tem MAIS que isso: so' as primeiras "
-                      f"{TETO_DE_SUBSTITUICOES:,} serao trocadas nesta "
+            aviso += (f"<br><br>O arquivo tem MAIS que isso: só as primeiras "
+                      f"{TETO_DE_SUBSTITUICOES:,} serão trocadas nesta "
                       f"passada.".replace(",", "."))
         if QMessageBox.question(
                 self, "Substituir todas", aviso + "<br><br>Continuar?",
@@ -467,7 +469,7 @@ class JanelaPrincipal(QMainWindow):
         # o editor mostraria o texto de antes das trocas.
         aba.editor.recarregar(aba.editor.linha_atual_no_documento())
         aba.titulo_mudou.emit()
-        self.barra_busca.dizer(f"{feitas:,} substituida(s)".replace(",", "."))
+        self.barra_busca.dizer(f"{feitas:,} substituída(s)".replace(",", "."))
         log.info("substituir todas em %s: %d ocorrencia(s)", aba.nome, feitas)
 
     # ==================================================================
@@ -526,9 +528,10 @@ class JanelaPrincipal(QMainWindow):
             self, f"Sobre o {APP}",
             f"<h3>{APP} {VERSAO}</h3>"
             f"<p>Editor de texto completo para arquivos grandes: o arquivo "
-            f"continua no disco, e so' o que voce edita ocupa memoria.</p>"
+            f"continua no disco, e só o que você edita ocupa "
+            f"memória.</p>"
             f"<p><b>Produzido por {AUTOR}</b><br>"
-            f"Licenca MIT</p>"
+            f"Licença MIT</p>"
             f"<p style='color:gray'>Python {sys.version.split()[0]} · "
             f"Qt {qVersion()}</p>"
             f"<p style='color:gray'>Log: {log_interno.caminho_do_log()}</p>")
