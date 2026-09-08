@@ -67,12 +67,38 @@ Já dá para abrir, digitar e salvar:
 | `tfedit/realce/` + `tfedit/linguagens/` — realce, 24 linguagens | pronto |
 | `tfedit/tema.py` — temas claro/escuro, temas do usuário | pronto |
 | `tfedit/conversao.py` — reinterpretar e converter a codificação | pronto |
+| `tfedit/interface/visualizadores/` — camada de views + hexadecimal | pronto |
 
 **Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
 começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
 memória. O `QPlainTextEdit` segura 5.001 blocos — a fatia —, e não as 400.001
 linhas. Gravar preserva o CRLF das 400.000 linhas e deixa intactas as que não
 foram tocadas.
+
+## Visualizar em hexadecimal
+
+Menu **Visualizar** (ou o campo do rodapé) troca entre `Texto` e `Hexadecimal`
+sem reabrir nada: as duas são views do **mesmo** documento, e o mmap, o índice e
+a tabela de peças são os mesmos.
+
+```
+00000000  48 65 6c 6c 6f 2c 20 6d  75 6e 64 6f 21 0d 0a 41  |Hello, mundo!..A|
+```
+
+**Funciona em 1 GB porque desenha sozinho.** Um `QTableView` com modelo virtual
+quebraria em dois pontos: a barra de rolagem em pixels estoura o inteiro de 32
+bits um pouco acima de 4 GB de arquivo, e o modelo seria consultado 17 vezes por
+linha visível (uma por célula e por papel). Aqui a rolagem é em unidade de
+**linha** — o mesmo inteiro aguenta 32 GB — e cada linha são três `drawText`.
+
+**Uma leitura por repintura.** O `paintEvent` pede ao documento um bloco com
+tudo o que a tela mostra. Medido no teste: **752 bytes** para desenhar uma tela
+de um arquivo de 2 MB. O custo por quadro não depende do tamanho do arquivo.
+
+Ele lê o **documento**, não o disco: o que você digitou no modo texto e ainda
+não gravou aparece no dump. `Ctrl+G` vira "ir para deslocamento" e aceita `1024`
+ou `0x400`. Copiar tem teto de 1 MB — a área de transferência guarda o texto
+inteiro na memória.
 
 ## O rodapé é interativo
 

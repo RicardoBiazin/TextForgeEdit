@@ -23,7 +23,7 @@ import pathlib
 from dataclasses import replace
 
 from PySide6.QtCore import QTimer, Signal
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtWidgets import QStackedWidget, QVBoxLayout, QWidget
 
 from tfedit import (codificacao, conversao, linguagens,
                     log_interno)
@@ -76,9 +76,27 @@ class Aba(QWidget):
         self.editor.sujou.connect(self.titulo_mudou)
         self.editor.conteudo_voltou.connect(self.titulo_mudou)
 
+        # UMA PILHA, e nao o editor como filho unico.
+        #
+        # O hexadecimal, a grade de CSV e a planilha sao views do MESMO
+        # documento, e trocar entre elas nao pode reconstruir a aba: o mmap, o
+        # indice e a tabela de pecas sao caros e sao os mesmos. A pilha guarda
+        # todas e mostra uma. Ver `trocar_para`, onde mora o cuidado.
+        self.pilha = QStackedWidget(self)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.editor)
+        layout.setSpacing(0)
+        layout.addWidget(self.pilha)
+        self.pilha.addWidget(self.editor)
+        self._views: dict[str, QWidget] = {"texto": self.editor}
+
+        # O que a LINGUAGEM sugere para este arquivo ("tabela" para .csv). E' so'
+        # uma sugestao: quem abre a view e' o usuario. Abrir a grade sozinho no
+        # arranque montaria o modelo contra um `total_de_linhas` que ainda esta'
+        # crescendo na thread de varredura.
+        self.visualizador_sugerido = (
+            self.provedor.visualizador_preferido()
+            if self.provedor is not None else "texto")
 
         self.indexador: Indexador | None = None
         if self.original.indexacao_completa:
@@ -141,8 +159,7 @@ class Aba(QWidget):
 
     @property
     def modificado(self) -> bool:
-        return (self.documento.alterado
-                or self.editor.sujo)
+        return self.documento.alterado or self.editor.sujo
 
     @property
     def titulo(self) -> str:
@@ -176,7 +193,7 @@ class Aba(QWidget):
         Devolve quantos bytes foram escritos. Levanta o que `gravacao.gravar`
         levantar -- quem chama e' que sabe como avisar o usuario.
         """
-        self.editor.sincronizar()
+        self.sincronizar()
         alvo = pathlib.Path(destino) if destino else self.caminho
         mesmo_arquivo = self.chave_de(alvo) == self.chave()
 
@@ -212,6 +229,121 @@ class Aba(QWidget):
         return escritos
 
     # ==================================================================
+    # Views
+    # ==================================================================
+
+    def registrar_view(self, nome: str, widget: QWidget) -> None:
+        self.remover_view(nome)
+        self._views[nome] = widget
+        self.pilha.addWidget(widget)
+
+    def remover_view(self, nome: str) -> None:
+        """Descarta uma view alternativa. "texto" nunca sai.
+
+        A view e' DESCARTADA, e nao guardada de lado: ela le' do documento a
+        cada desenho, mas pode ter estado proprio (o dialeto do CSV, a largura
+        das colunas) que envelhece quando o documento muda por baixo. Montar de
+        novo custa pouco; mostrar dado velho custa caro.
+        """
+        if nome == "texto":
+            return
+        widget = self._views.pop(nome, None)
+        if widget is None:
+            return
+        widget.encerrar()
+        self.pilha.removeWidget(widget)
+        widget.setParent(None)
+        widget.deleteLater()
+
+    def tem_view(self, nome: str) -> bool:
+        return nome in self._views
+
+    def view(self, nome: str) -> QWidget | None:
+        return self._views.get(nome)
+
+    def view_atual(self) -> str:
+        atual = self.pilha.currentWidget()
+        for nome, widget in self._views.items():
+            if widget is atual:
+                return nome
+        return "texto"
+
+    def trocar_para(self, nome: str) -> bool:
+        """Mostra outra view. A ORDEM DAQUI NAO E' NEGOCIAVEL.
+
+        O editor continua VIVO e com a fatia carregada atras da pilha. Duas
+        coisas seguem disso:
+
+        SAINDO do texto, a fatia pode ter o que acabou de ser digitado e ainda
+        nao foi para a tabela de pecas. A view le' do documento -- sem
+        sincronizar, ela mostraria o arquivo de antes da ultima tecla.
+
+        VOLTANDO para o texto, a view pode ter editado o documento (uma celula
+        da grade). A fatia no QPlainTextEdit e' anterior a essa edicao. Sem
+        recarregar, o texto velho aparece, o usuario digita uma letra, a fatia
+        fica suja e o conteudo ANTERIOR a edicao da grade volta ao documento.
+        """
+        widget = self._views.get(nome)
+        if widget is None:
+            return False
+        atual = self.view_atual()
+        if atual == nome:
+            return True
+
+        self.sincronizar()
+        self.pilha.setCurrentWidget(widget)
+        if nome == "texto":
+            self.editor.recarregar(self.editor.linha_atual_no_documento())
+        else:
+            widget.atualizar()
+        widget.setFocus()
+        log.info("%s: view %s -> %s", self.nome, atual, nome)
+        return True
+
+    def focar_view_atual(self) -> None:
+        self.pilha.currentWidget().setFocus()
+
+    def sincronizar(self) -> bool:
+        """Leva ao documento o que estiver pendente na VIEW ATIVA."""
+        atual = self.view_atual()
+        if atual == "texto":
+            return self.editor.sincronizar()
+        return self._views[atual].sincronizar()
+
+    def linha_atual(self) -> int:
+        atual = self.view_atual()
+        if atual == "texto":
+            return self.editor.linha_atual_no_documento()
+        return self._views[atual].linha_atual()
+
+    def ir_para_linha(self, linha: int) -> None:
+        atual = self.view_atual()
+        if atual == "texto":
+            self.editor.ir_para_linha(linha)
+        else:
+            self._views[atual].ir_para_linha(linha)
+
+    def aplicar_tema(self, tema) -> None:
+        for nome, widget in self._views.items():
+            if nome != "texto":
+                widget.aplicar_tema(tema)
+
+    def ao_indexar(self) -> None:
+        """O total de linhas cresceu. Quem depende dele precisa saber."""
+        for nome, widget in self._views.items():
+            if nome != "texto":
+                widget.atualizar()
+
+    def _descartar_views_de_texto(self) -> None:
+        """Views cuja leitura depende do PERFIL de codificacao.
+
+        Chamado ao reinterpretar ou converter: o dialeto do CSV foi detectado
+        sobre uma amostra decodificada com o codec ANTIGO, e mante-lo daria
+        colunas erradas sem nenhum erro visivel.
+        """
+        self.remover_view("tabela")
+
+    # ==================================================================
     # Codificacao
     # ==================================================================
 
@@ -235,6 +367,7 @@ class Aba(QWidget):
         self.perfil = replace(self.perfil, codec=codec, bom=bom,
                               como_decidiu="escolha do usuário")
         self.janela.perfil = self.perfil
+        self._descartar_views_de_texto()
         self.editor.recarregar(self.editor.linha_atual_no_documento())
         self.titulo_mudou.emit()
         log.info("%s reinterpretado como %s", self.nome, self.perfil.rotulo)
@@ -269,7 +402,9 @@ class Aba(QWidget):
         self.perfil = codificacao.detectar(
             self.original.ler(0, codificacao.SONDAGEM))
         self.janela.perfil = self.perfil
+        self._descartar_views_de_texto()
         self.editor.recarregar(self.editor.linha_atual_no_documento())
+        self.ao_indexar()
         self.titulo_mudou.emit()
         log.info("%s convertido para %s (%d bytes, detectado como %s)",
                  self.nome, alvo.rotulo, escritos, self.perfil.rotulo)
@@ -290,6 +425,11 @@ class Aba(QWidget):
         if self.indexador is not None:
             self.indexador.parar()
             self.indexador = None
+        # As views ANTES do mmap. Uma view ja' descartada ainda pode receber um
+        # paintEvent antes de o `deleteLater` acontecer, e nesse instante ela
+        # leria de um mmap fechado.
+        for nome in [n for n in self._views if n != "texto"]:
+            self.remover_view(nome)
         if self.original is not None:
             self.original.fechar()
         log.info("fechado %s", self.nome)

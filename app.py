@@ -32,6 +32,8 @@ OBRIGATORIOS = (
     "tfedit.linguagens", "tfedit.linguagens.registro",
     "tfedit.realce.pintor", "tfedit.realce.regras",
     "tfedit.conversao",
+    "tfedit.interface.visualizadores.base",
+    "tfedit.interface.visualizadores.hex",
 )
 
 

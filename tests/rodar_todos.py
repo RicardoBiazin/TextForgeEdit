@@ -47,6 +47,8 @@ SUITES = [
      "reinterpretar e converter a codificacao, sem perda silenciosa"),
     ("teste_realce.py",
      "realce de sintaxe na fatia: 24 linguagens e a semente de contexto"),
+    ("teste_visualizadores.py",
+     "camada de views e o visor hexadecimal sobre a tabela de pecas"),
     ("teste_janela_principal.py",
      "abas, salvar como, arrastar-e-soltar, busca pela barra, log"),
 ]

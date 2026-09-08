@@ -37,6 +37,17 @@ FILTRO = ("Arquivos de texto (*.txt *.log *.csv *.dat *.json *.xml *.sql "
 #: transforma isso num aviso em vez de num travamento.
 TETO_DE_SUBSTITUICOES = 100_000
 
+#: Comandos do editor que uma view SO' LEITURA sabe atender, e o nome que ela
+#: usa. `selectAll` fica DE FORA de proposito: selecionar 1 GB so' teria
+#: serventia se o copiar seguinte funcionasse, e ele nao pode (ver o teto de
+#: copia do visor hexadecimal). Cair na mensagem "volte para o texto" e' mais
+#: honesto que selecionar o arquivo inteiro para depois recusar copiar.
+SO_LEITURA_NA_VIEW = {"copy": "copiar"}
+
+#: Como cada view se chama para o usuario.
+ROTULO_DA_VIEW = {"texto": "Texto", "hex": "Hexadecimal",
+                  "tabela": "Tabela", "planilha": "Planilha"}
+
 
 class _RotuloClicavel(QLabel):
     """Um campo do rodapé que responde ao clique.
@@ -108,6 +119,9 @@ class JanelaPrincipal(QMainWindow):
         self.barra = QStatusBar(self)
         self.setStatusBar(self.barra)
         self.rotulo_posicao = QLabel("", self)
+        self.rotulo_view = _RotuloClicavel(
+            "", "Como o arquivo está sendo mostrado. Clique para trocar.", self)
+        self.rotulo_view.clicado.connect(self._menu_no_rodape_view)
         self.rotulo_linguagem = _RotuloClicavel(
             "", "Linguagem do realce. Clique para trocar.", self)
         self.rotulo_linguagem.clicado.connect(self._menu_no_rodape_linguagem)
@@ -121,8 +135,9 @@ class JanelaPrincipal(QMainWindow):
         self.progresso.setTextVisible(False)
         self.progresso.hide()
         self.barra.addPermanentWidget(self.progresso)
-        for rotulo in (self.rotulo_posicao, self.rotulo_linguagem,
-                       self.rotulo_codec, self.rotulo_memoria):
+        for rotulo in (self.rotulo_posicao, self.rotulo_view,
+                       self.rotulo_linguagem, self.rotulo_codec,
+                       self.rotulo_memoria):
             self.barra.addPermanentWidget(rotulo)
 
         # `addPermanentWidget`, e nao `addWidget`: a area dos widgets NAO
@@ -135,6 +150,82 @@ class JanelaPrincipal(QMainWindow):
         self.credito.clicado.connect(self.sobre)
         self.barra.addPermanentWidget(self.credito)
         self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para cá")
+
+    # ==================================================================
+    # Visualização
+    # ==================================================================
+
+    def _montar_menu_view(self) -> None:
+        self._preencher_view(self.menu_view)
+
+    def _menu_no_rodape_view(self):
+        return self._abrir_no_rodape(self.rotulo_view, self._preencher_view)
+
+    def _preencher_view(self, menu) -> None:
+        """As visualizações disponíveis para o arquivo desta aba."""
+        menu.clear()
+        aba = self.aba_atual
+        if aba is None:
+            acao = menu.addAction("(nenhum arquivo aberto)")
+            acao.setEnabled(False)
+            return
+
+        atual = aba.view_atual()
+        grupo = QActionGroup(menu)
+        grupo.setExclusive(True)
+        for nome in ("texto", "hex", "tabela", "planilha"):
+            if nome != "texto" and not self._pode_abrir_view(aba, nome):
+                continue
+            acao = menu.addAction(ROTULO_DA_VIEW[nome])
+            acao.setCheckable(True)
+            acao.setChecked(nome == atual)
+            acao.triggered.connect(
+                lambda _c=False, n=nome: self._trocar_view(n))
+            grupo.addAction(acao)
+
+    def _pode_abrir_view(self, aba, nome: str) -> bool:
+        """A view existe nesta compilação e serve para este arquivo?
+
+        O menu não lista o que não abre: uma entrada que não faz nada ao ser
+        clicada é pior que uma entrada ausente.
+        """
+        if nome == "hex":
+            return True
+        return aba.tem_view(nome)
+
+    def _trocar_view(self, nome: str) -> None:
+        aba = self.aba_atual
+        if aba is None or aba.view_atual() == nome:
+            return
+        if not aba.tem_view(nome) and not self._montar_view(aba, nome):
+            return
+        aba.trocar_para(nome)
+        self._atualizar_rotulo_view()
+        self._mostrar_posicao(aba.linha_atual(), 0)
+
+    def _montar_view(self, aba, nome: str) -> bool:
+        """Cria a view sob demanda. False quando não há como.
+
+        Sob demanda, e não no arranque: montar a grade de um CSV enquanto a
+        varredura ainda corre criaria o modelo contra um total de linhas que
+        está crescendo, e o visor de um arquivo que ninguém vai abrir em
+        hexadecimal é trabalho jogado fora.
+        """
+        if nome == "hex":
+            from tfedit.interface.visualizadores.hex import VisorHexadecimal
+
+            visor = VisorHexadecimal(aba.documento, aba.perfil, aba,
+                                     tema=self.tema, cfg=self.cfg)
+            visor.posicao_mudou.connect(self._mostrar_posicao)
+            visor.recusou.connect(lambda m: self.barra.showMessage(m, 8000))
+            aba.registrar_view("hex", visor)
+            return True
+        return False
+
+    def _atualizar_rotulo_view(self) -> None:
+        aba = self.aba_atual
+        self.rotulo_view.setText(
+            "" if aba is None else ROTULO_DA_VIEW.get(aba.view_atual(), ""))
 
     # ==================================================================
     # Codificação
@@ -370,7 +461,7 @@ class JanelaPrincipal(QMainWindow):
                     aba.editor.recarregar(guardada.linha)
                     aba.titulo_mudou.emit()
             if guardada.linha:
-                aba.editor.ir_para_linha(guardada.linha)
+                aba.ir_para_linha(guardada.linha)
 
         sessao_mod.esquecer()
         if recusadas:
@@ -398,7 +489,7 @@ class JanelaPrincipal(QMainWindow):
             self.abrir_arquivo(str(caminho))
         linha = int(pedido.get("linha", 0) or 0)
         if linha and self.aba_atual is not None:
-            self.aba_atual.editor.ir_para_linha(linha - 1)
+            self.aba_atual.ir_para_linha(linha - 1)
 
         # Trazer para a frente: sem isto o usuário clica em "Abrir com", o
         # arquivo abre numa janela que está atrás de tudo, e parece que nada
@@ -456,6 +547,9 @@ class JanelaPrincipal(QMainWindow):
              lambda: self.barra_busca._procurar(True), localizar)
         localizar.addSeparator()
         acao("&Ir para linha...", "Ctrl+G", self.ir_para_linha, localizar)
+
+        self.menu_view = self.menuBar().addMenu("&Visualizar")
+        self.menu_view.aboutToShow.connect(self._montar_menu_view)
 
         self.menu_codificacao = self.menuBar().addMenu("&Codificação")
         self.menu_codificacao.aboutToShow.connect(self._montar_menu_codificacao)
@@ -525,7 +619,7 @@ class JanelaPrincipal(QMainWindow):
         aba = self.abas.widget(indice)
         if not isinstance(aba, Aba):
             return False
-        aba.editor.sincronizar()
+        aba.sincronizar()
         if aba.modificado and not self._perguntar_para_fechar(aba):
             return False
         self.abas.removeTab(indice)
@@ -536,6 +630,8 @@ class JanelaPrincipal(QMainWindow):
             # e' estado de arquivo nenhum, e some-lo ao fechar a ultima aba
             # deixaria o rodape vazio sem motivo.
             self.rotulo_posicao.clear()
+            self.rotulo_view.clear()
+            self.rotulo_linguagem.clear()
             self.rotulo_codec.clear()
             self.rotulo_memoria.clear()
             self.setWindowTitle(f"TextForgeEdit {VERSAO}")
@@ -564,10 +660,11 @@ class JanelaPrincipal(QMainWindow):
         self.rotulo_codec.setText(
             f"{aba.perfil.rotulo}  {aba.perfil.rotulo_eol}")
         self.rotulo_linguagem.setText(aba.nome_da_linguagem)
-        self._mostrar_posicao(aba.editor.linha_atual_no_documento(), 0)
+        self._atualizar_rotulo_view()
+        self._mostrar_posicao(aba.linha_atual(), 0)
         self.progresso.setVisible(aba.indexando_agora)
         self._atualizar_titulos()
-        aba.editor.setFocus()
+        aba.focar_view_atual()
 
     def _atualizar_titulos(self) -> None:
         for indice, aba in enumerate(self.todas_as_abas()):
@@ -587,6 +684,7 @@ class JanelaPrincipal(QMainWindow):
             return                       # progresso de uma aba de fundo
         self.progresso.setValue(varrido * 100 // max(1, total))
         aba.editor._ajustar_margem()
+        aba.ao_indexar()
 
     def _ao_terminar_indice(self, total_de_linhas: int) -> None:
         aba = self.aba_atual
@@ -692,17 +790,22 @@ class JanelaPrincipal(QMainWindow):
 
     def _abrir_barra(self, *, no_substituir: bool) -> None:
         aba = self.aba_atual
-        selecao = aba.editor.textCursor().selectedText() if aba else ""
+        # Sem selecao quando a view nao e' o texto: `textCursor()` daria a
+        # selecao do editor ESCONDIDO, que nao e' o que esta' na tela.
+        selecao = ("" if aba is None or aba.view_atual() != "texto"
+                   else aba.editor.textCursor().selectedText())
         self.barra_busca.focar(selecao, no_substituir=no_substituir)
 
     def _focar_editor(self) -> None:
         aba = self.aba_atual
         if aba is not None:
-            aba.editor.setFocus()
+            aba.focar_view_atual()
 
     def _procurar(self, criterio: busca.Criterio, para_tras: bool) -> None:
         aba = self.aba_atual
         if aba is None:
+            return
+        if not self._exigir_modo_texto(aba, "A busca"):
             return
         cursor = aba.editor.textCursor()
         linha = aba.editor.linha_atual_no_documento()
@@ -762,7 +865,9 @@ class JanelaPrincipal(QMainWindow):
         if aba.indexando_agora:
             self._avisar_indexando()
             return
-        aba.editor.sincronizar()
+        if not self._exigir_modo_texto(aba, "A substituição"):
+            return
+        aba.sincronizar()
 
         quantas, cortou = busca.contar(aba.documento, criterio,
                                        aba.perfil.codec,
@@ -803,17 +908,97 @@ class JanelaPrincipal(QMainWindow):
         aba = self.aba_atual
         if aba is None:
             return
+        if aba.view_atual() == "hex":
+            self._ir_para_deslocamento(aba)
+            return
         total = aba.documento.total_de_linhas
         numero, ok = QInputDialog.getInt(
             self, "Ir para linha", f"Linha (1 a {total:,}):".replace(",", "."),
-            aba.editor.linha_atual_no_documento() + 1, 1, total)
+            aba.linha_atual() + 1, 1, total)
         if ok:
-            aba.editor.ir_para_linha(numero - 1)
+            aba.ir_para_linha(numero - 1)
+
+    def _ir_para_deslocamento(self, aba) -> None:
+        """No hexadecimal, "ir para" é por byte, e não por linha.
+
+        Reusa o Ctrl+G em vez de inventar um segundo atalho: é o mesmo gesto
+        ("me leve a um lugar"), e a unidade certa muda com a visualização.
+        """
+        from PySide6.QtWidgets import QInputDialog
+
+        texto, ok = QInputDialog.getText(
+            self, "Ir para deslocamento",
+            f"Deslocamento em bytes (0 a {aba.documento.tamanho:,}), "
+            f"decimal ou 0x…:".replace(",", "."))
+        if not ok or not texto.strip():
+            return
+        try:
+            # `int(texto, 0)` aceita "1024" e "0x400". NUNCA `eval`: um arquivo
+            # aberto -- e o que o usuário digita sobre ele -- é DADO, nunca
+            # código. Ver o CLAUDE.md.
+            offset = int(texto.strip(), 0)
+        except ValueError:
+            self.barra.showMessage(
+                f"“{texto.strip()}” não é um número. Use 1024 ou 0x400.", 8000)
+            return
+        if not 0 <= offset <= aba.documento.tamanho:
+            self.barra.showMessage(
+                f"O deslocamento precisa estar entre 0 e "
+                f"{aba.documento.tamanho:,}.".replace(",", "."), 8000)
+            return
+        aba.view("hex").ir_para_offset(offset)
+
+    def _exigir_modo_texto(self, aba, o_que: str) -> bool:
+        """Volta para o texto quando o comando so' existe la'. False se desistiu.
+
+        Busca e substituicao trabalham em (linha, coluna de CARACTERE). Mapear
+        isso para faixa de bytes no hexadecimal exigiria recodificar o prefixo
+        de cada linha, e `_substituir_todas` mexe direto na tabela de pecas.
+        Recusar em silencio seria pior que voltar para o texto avisando.
+        """
+        view = aba.view_atual()
+        if view == "texto":
+            return True
+        if not aba.trocar_para("texto"):
+            return False
+        self.barra.showMessage(
+            f"{o_que} funciona no modo texto — voltando para ele.", 6000)
+        return True
 
     def _no_editor(self, metodo: str) -> None:
+        """Executa o metodo no editor -- ou o equivalente da VIEW ATIVA.
+
+        O `QShortcutMap` do Qt resolve o atalho de menu ANTES de o evento
+        chegar ao widget em foco. Sem este desvio, com o hexadecimal na frente,
+        o Ctrl+V do menu INSERE texto na fatia do editor escondido -- marcando
+        como modificado um arquivo que a pessoa estava apenas lendo -- e o
+        Ctrl+C copia a selecao desse editor, que esta' vazia.
+
+        O projeto irmao teve os dois defeitos; aqui seriam piores, porque o
+        editor escondido nao esta' vazio: ele carrega uma fatia de verdade.
+        """
         aba = self.aba_atual
-        if aba is not None:
+        if aba is None:
+            return
+        view = aba.view_atual()
+        if view == "texto":
             getattr(aba.editor, metodo)()
+            return
+
+        widget = aba.view(view)
+        equivalente = SO_LEITURA_NA_VIEW.get(metodo)
+        if equivalente is not None and hasattr(widget, equivalente):
+            getattr(widget, equivalente)()
+            return
+
+        if getattr(widget, "editavel", False):
+            self.barra.showMessage(
+                "Este comando é do editor de texto. Nesta visualização, edite "
+                "clicando na célula.", 6000)
+        else:
+            self.barra.showMessage(
+                f"“{ROTULO_DA_VIEW.get(view, view)}” é somente leitura. Volte "
+                f"para o texto para usar este comando.", 6000)
 
     def _mostrar_posicao(self, linha: int, coluna: int) -> None:
         aba = self.aba_atual
@@ -890,7 +1075,7 @@ class JanelaPrincipal(QMainWindow):
         # usuário cancelar o fechamento, nada se perdeu, e se ele descartar as
         # alterações a sessão guardada ainda registra onde ele estava.
         for aba in self.todas_as_abas():
-            aba.editor.sincronizar()
+            aba.sincronizar()
         self._guardar_sessao()
 
         for aba in self.todas_as_abas():
