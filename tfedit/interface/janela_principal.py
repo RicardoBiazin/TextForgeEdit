@@ -191,6 +191,12 @@ class JanelaPrincipal(QMainWindow):
         """
         if nome == "hex":
             return True
+        if nome == "tabela":
+            # Enquanto a varredura corre, o total de linhas ainda cresce: a
+            # grade abriria mostrando uma fracao do arquivo. E uma coluna so'
+            # nao e' tabela.
+            return (not aba.indexando_agora
+                    and aba.dialeto_csv() is not None)
         return aba.tem_view(nome)
 
     def _trocar_view(self, nome: str) -> None:
@@ -219,6 +225,26 @@ class JanelaPrincipal(QMainWindow):
             visor.posicao_mudou.connect(self._mostrar_posicao)
             visor.recusou.connect(lambda m: self.barra.showMessage(m, 8000))
             aba.registrar_view("hex", visor)
+            return True
+
+        if nome == "tabela":
+            from tfedit.interface.visualizadores.grade_csv import GradeCsv
+
+            dialeto = aba.dialeto_csv()
+            if dialeto is None:
+                self.barra.showMessage(
+                    "Este arquivo não parece uma tabela: não foi possível "
+                    "reconhecer um separador de colunas.", 8000)
+                return False
+            grade = GradeCsv(aba.documento, aba.perfil, dialeto, aba,
+                             tema=self.tema, cfg=self.cfg)
+            grade.aplicar_tema(self.tema)
+            grade.posicao_mudou.connect(self._mostrar_posicao)
+            grade.recusou.connect(lambda m: self.barra.showMessage(m, 8000))
+            grade.sujou.connect(self._atualizar_titulos)
+            aba.registrar_view("tabela", grade)
+            self.barra.showMessage(
+                f"Tabela: {dialeto.descrever()}.", 8000)
             return True
         return False
 

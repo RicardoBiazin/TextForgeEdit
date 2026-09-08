@@ -22,12 +22,12 @@ VSVersionInfo(
         '041604b0',
         [StringStruct('CompanyName', 'Ricardo Biazin'),
          StringStruct('FileDescription', 'TextForgeEdit - editor de texto para arquivos grandes'),
-         StringStruct('FileVersion', '0.6.0'),
+         StringStruct('FileVersion', '0.7.0'),
          StringStruct('InternalName', 'TextForgeEdit'),
          StringStruct('LegalCopyright', 'Copyright (c) 2026 Ricardo Biazin. Licenca MIT.'),
          StringStruct('OriginalFilename', 'TextForgeEdit.exe'),
          StringStruct('ProductName', 'TextForgeEdit'),
-         StringStruct('ProductVersion', '0.6.0')])
+         StringStruct('ProductVersion', '0.7.0')])
     ]),
     VarFileInfo([VarStruct('Translation', [0x0416, 1200])])
   ]

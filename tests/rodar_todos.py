@@ -22,6 +22,8 @@ RAIZ = os.path.dirname(AQUI)
 LIMITE_POR_SUITE_S = 180
 
 LIMITE_PROPRIO_S: dict[str, int] = {
+    # Cria um CSV de 200 mil linhas para provar que a grade nao le tudo.
+    "teste_visualizadores.py": 300,
     # Gera dezenas de MB em %TEMP% e mede memoria.
     "teste_pecas.py": 600,
     "teste_sessao.py": 300,
@@ -47,8 +49,10 @@ SUITES = [
      "reinterpretar e converter a codificacao, sem perda silenciosa"),
     ("teste_realce.py",
      "realce de sintaxe na fatia: 24 linguagens e a semente de contexto"),
+    ("teste_csv_dialeto.py",
+     "dialeto de CSV: delimitador pela consistencia, nao pela frequencia"),
     ("teste_visualizadores.py",
-     "camada de views e o visor hexadecimal sobre a tabela de pecas"),
+     "views: hexadecimal e grade de CSV sobre a tabela de pecas"),
     ("teste_janela_principal.py",
      "abas, salvar como, arrastar-e-soltar, busca pela barra, log"),
 ]

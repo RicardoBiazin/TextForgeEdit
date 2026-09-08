@@ -349,6 +349,289 @@ def testar_busca_volta_ao_texto() -> None:
             _encerrar(janela)
 
 
+
+# ======================================================================
+# A grade de CSV
+# ======================================================================
+
+def _csv(pasta, nome: str, linhas, eol: bytes = b"\r\n"):
+    """Escreve um CSV e devolve (janela, caminho)."""
+    dados = eol.join(l.encode("utf-8") for l in linhas) + eol
+    return _janela_com(pasta, nome, dados)
+
+
+def testar_grade_abre_e_le() -> None:
+    secao("A grade abre com o dialeto certo")
+
+    from PySide6.QtCore import Qt
+
+    with pasta_temporaria() as pasta:
+        linhas = ["produto;preco;desconto"]
+        linhas += [f"Parafuso 3,5mm {i};{i},50;0,{i % 10}0" for i in range(60)]
+        janela, _ = _csv(pasta, "p.csv", linhas)
+        try:
+            aba = janela.aba_atual
+            dialeto = aba.dialeto_csv()
+            checa(dialeto is not None and dialeto.delimitador == ";",
+                  f"delimitador reconhecido: {dialeto.rotulo_do_delimitador}")
+            checa(dialeto.tem_cabecalho, "e a primeira linha e' cabecalho")
+
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+            checa_igual(grade.modelo.rowCount(), 60,
+                        "*** 60 linhas de dados: sem o cabecalho e sem a "
+                        "linha fantasma do \\n final ***")
+            checa_igual(grade.modelo.columnCount(), 3, "tres colunas")
+            cabecalho = [grade.modelo.headerData(c, Qt.Orientation.Horizontal)
+                         for c in range(3)]
+            checa_igual(cabecalho, ["produto", "preco", "desconto"],
+                        "o cabecalho vem do arquivo")
+            checa_igual(grade.modelo.data(grade.modelo.index(0, 1)), "0,50",
+                        "e a celula tras o valor")
+        finally:
+            _encerrar(janela)
+
+
+def testar_grade_nao_le_o_arquivo_inteiro() -> None:
+    secao("*** A grade le' o que aparece, e nao o arquivo ***")
+
+    with pasta_temporaria() as pasta:
+        linhas = ["produto;preco;desconto"]
+        linhas += [f"Item {i};{i},50;0,10" for i in range(200_000)]
+        janela, _ = _csv(pasta, "grande.csv", linhas)
+        try:
+            aba = janela.aba_atual
+            pedidas = [0]
+            original = aba.documento.faixa
+
+            def espiar(a, b):
+                resultado = original(a, b)
+                pedidas[0] += len(resultado)
+                return resultado
+
+            aba.documento.faixa = espiar
+            try:
+                janela._trocar_view("tabela")
+                grade = aba.view("tabela")
+                grade.resize(900, 600)
+                grade.show()
+                grade.viewport().grab()
+                drenar_eventos()
+            finally:
+                aba.documento.faixa = original
+
+            checa_igual(grade.modelo.rowCount(), 200_000,
+                        "a grade sabe que ha' 200 mil linhas")
+            checa(pedidas[0] > 0, f"e leu alguma coisa ({pedidas[0]} linhas)")
+            checa(pedidas[0] < 3000,
+                  f"*** mas leu so' {pedidas[0]} linhas das 200.000 -- medir "
+                  f"coluna ou contar linha varrendo tudo apareceria aqui ***")
+        finally:
+            _encerrar(janela)
+
+
+def testar_celula_e_cirurgica() -> None:
+    secao("*** Editar uma celula nao reescreve as outras ***")
+
+    with pasta_temporaria() as pasta:
+        # O campo 1 esta' entre aspas SEM precisar. Reconstruir o registro
+        # inteiro com o quoting minimo do modulo `csv` tiraria essas aspas --
+        # alteracao silenciosa de um campo que ninguem tocou.
+        linhas = ["nome;observacao;valor"]
+        linhas += [f'Ana {i};"texto entre aspas";{i}' for i in range(30)]
+        janela, alvo = _csv(pasta, "aspas.csv", linhas)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+
+            ok = grade.modelo.setData(grade.modelo.index(0, 0), "TROCADO")
+            checa(ok, "a celula aceitou o valor")
+
+            linha = aba.documento.linha(1)
+            checa_igual(linha, b'TROCADO;"texto entre aspas";0',
+                        '*** o campo 0 mudou e as aspas do campo 1 '
+                        'sobreviveram ***')
+            checa_igual(aba.documento.total_de_edicoes, 1,
+                        "*** e foi UMA operacao: um Ctrl+Z desfaz a celula ***")
+
+            aba.documento.desfazer()
+            checa_igual(aba.documento.linha(1), b'Ana 0;"texto entre aspas";0',
+                        "e desfazer devolve a linha inteira")
+        finally:
+            _encerrar(janela)
+
+
+def testar_celula_preserva_o_terminador() -> None:
+    secao("*** O fim de linha vem da LINHA, e nao do perfil ***")
+
+    with pasta_temporaria() as pasta:
+        # Fim de linha MISTO: a linha 2 e' CRLF, a 3 e' LF. Usar o terminador
+        # majoritario do arquivo trocaria bytes que ninguem mandou trocar.
+        dados = (b"nome;valor\r\n"
+                 b"Ana;10\r\n"
+                 b"Bruno;20\n"
+                 b"Carla;30\r\n")
+        janela, alvo = _janela_com(pasta, "misto.csv", dados)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+
+            # A linha 2 do documento (Bruno) termina em LF.
+            grade.modelo.setData(grade.modelo.index(1, 1), "99")
+            aba.salvar()
+
+            gravado = alvo.read_bytes()
+            checa(b"Bruno;99\n" in gravado and b"Bruno;99\r\n" not in gravado,
+                  f"*** a linha editada continua com LF, e nao virou CRLF ***")
+            checa(b"Ana;10\r\n" in gravado,
+                  "e as linhas nao tocadas continuam com CRLF")
+        finally:
+            _encerrar(janela)
+
+
+def testar_celula_recusa_o_que_nao_cabe() -> None:
+    secao("*** O que a codificacao nao aceita e' RECUSADO ***")
+
+    with pasta_temporaria() as pasta:
+        linhas = [f"Ana {i};{i}" for i in range(30)]
+        dados = b"\r\n".join(l.encode("cp1252") for l in linhas) + b"\r\n"
+        janela, alvo = _janela_com(pasta, "latin.csv", dados)
+        try:
+            aba = janela.aba_atual
+            aba.reinterpretar("cp1252")
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+
+            recusas = []
+            grade.recusou.connect(recusas.append)
+
+            antes = alvo.read_bytes()
+            ok = grade.modelo.setData(grade.modelo.index(0, 0), "ideograma 中")
+            checa(not ok, "*** a celula NAO aceitou o caractere ***")
+            checa(recusas and "não existe" in recusas[0],
+                  f"e explicou por que: {recusas}")
+            checa(not aba.documento.alterado,
+                  "*** o documento continua intacto: nada de '?' gravado ***")
+            checa_igual(alvo.read_bytes(), antes, "e o disco tambem")
+
+            recusas.clear()
+            ok = grade.modelo.setData(grade.modelo.index(0, 0),
+                                      "com\nquebra")
+            checa(not ok, "quebra de linha numa celula tambem e' recusada")
+            checa(recusas and "quebra de linha" in recusas[0],
+                  f"com o motivo certo: {recusas}")
+        finally:
+            _encerrar(janela)
+
+
+def testar_registro_de_varias_linhas_e_sinalizado() -> None:
+    secao("*** Aspas sem fechar: sinalizado, e nao editavel ***")
+
+    from PySide6.QtCore import Qt
+
+    with pasta_temporaria() as pasta:
+        # A grade trabalha com uma linha = um registro. Este arquivo quebra
+        # essa premissa, e o certo e' recusar a edicao em vez de gravar por
+        # cima de um registro entendido errado.
+        linhas = ["nome;observacao;valor"]
+        linhas.append('Ana;"comeca aqui')
+        linhas.append('e termina aqui";10')
+        linhas += [f"Bruno {i};simples;{i}" for i in range(20)]
+        janela, _ = _csv(pasta, "multilinha.csv", linhas)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+
+            # Forca a leitura do bloco, que e' quando as suspeitas aparecem.
+            grade.modelo.data(grade.modelo.index(0, 0))
+            checa(grade.modelo._suspeitas,
+                  f"*** a linha com aspas sem fechar foi marcada: "
+                  f"{sorted(grade.modelo._suspeitas)} ***")
+
+            suspeita = min(grade.modelo._suspeitas)
+            linha_na_grade = suspeita - (1 if grade.dialeto.tem_cabecalho else 0)
+            indice = grade.modelo.index(linha_na_grade, 0)
+            editavel = bool(grade.modelo.flags(indice)
+                            & Qt.ItemFlag.ItemIsEditable)
+            checa(not editavel,
+                  "*** e ela NAO e' editavel: nao se corrompe o que nao se "
+                  "consegue analisar ***")
+
+            dica = grade.modelo.data(indice, Qt.ItemDataRole.ToolTipRole)
+            checa(dica and "continua na linha seguinte" in dica,
+                  f"a dica explica o motivo: {dica!r}")
+        finally:
+            _encerrar(janela)
+
+
+def testar_grade_nao_edita_durante_a_varredura() -> None:
+    secao("Sem editar enquanto o indice cresce")
+
+    from PySide6.QtCore import Qt
+
+    with pasta_temporaria() as pasta:
+        linhas = ["a;b;c"] + [f"{i};{i};{i}" for i in range(50)]
+        janela, _ = _csv(pasta, "v.csv", linhas)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+
+            indice = grade.modelo.index(0, 0)
+            checa(bool(grade.modelo.flags(indice)
+                       & Qt.ItemFlag.ItemIsEditable),
+                  "com o indice pronto, a celula e' editavel")
+
+            # `pode_editar` segue `indexacao_completa`; a mesma regra do editor
+            # de texto. Partir uma peca precisa saber quantas linhas ficam de
+            # cada lado.
+            real = type(aba.documento).pode_editar
+            type(aba.documento).pode_editar = property(lambda _s: False)
+            try:
+                checa(not (grade.modelo.flags(indice)
+                           & Qt.ItemFlag.ItemIsEditable),
+                      "*** e deixa de ser enquanto a varredura corre ***")
+                checa(not grade.modelo.setData(indice, "X"),
+                      "e o setData recusa mesmo se chamado direto")
+            finally:
+                type(aba.documento).pode_editar = real
+        finally:
+            _encerrar(janela)
+
+
+def testar_menu_oferece_a_tabela() -> None:
+    secao("O menu Visualizar oferece a tabela so' para tabela")
+
+    from PySide6.QtWidgets import QMenu
+
+    with pasta_temporaria() as pasta:
+        linhas = ["a;b;c"] + [f"{i};{i};{i}" for i in range(40)]
+        janela, _ = _csv(pasta, "tab.csv", linhas)
+        try:
+            menu = QMenu()
+            janela._preencher_view(menu)
+            rotulos = [a.text() for a in menu.actions()]
+            checa("Tabela" in rotulos,
+                  f"*** num CSV a Tabela aparece: {rotulos} ***")
+        finally:
+            _encerrar(janela)
+
+    with pasta_temporaria() as pasta:
+        janela, _ = _janela_com(pasta, "prosa.txt",
+                                b"texto corrido sem separador\r\n" * 40)
+        try:
+            menu = QMenu()
+            janela._preencher_view(menu)
+            rotulos = [a.text() for a in menu.actions()]
+            checa("Tabela" not in rotulos,
+                  f"*** e num texto corrido, nao: {rotulos} ***")
+        finally:
+            _encerrar(janela)
+
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -366,6 +649,14 @@ def main() -> int:
     testar_ir_para_deslocamento()
     testar_copia_tem_teto()
     testar_busca_volta_ao_texto()
+    testar_grade_abre_e_le()
+    testar_grade_nao_le_o_arquivo_inteiro()
+    testar_celula_e_cirurgica()
+    testar_celula_preserva_o_terminador()
+    testar_celula_recusa_o_que_nao_cabe()
+    testar_registro_de_varias_linhas_e_sinalizado()
+    testar_grade_nao_edita_durante_a_varredura()
+    testar_menu_oferece_a_tabela()
     return resumir()
 
 

@@ -34,6 +34,7 @@ OBRIGATORIOS = (
     "tfedit.conversao",
     "tfedit.interface.visualizadores.base",
     "tfedit.interface.visualizadores.hex",
+    "tfedit.interface.visualizadores.grade_csv", "tfedit.csv_dialeto",
 )
 
 

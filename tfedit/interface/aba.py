@@ -94,6 +94,9 @@ class Aba(QWidget):
         # uma sugestao: quem abre a view e' o usuario. Abrir a grade sozinho no
         # arranque montaria o modelo contra um `total_de_linhas` que ainda esta'
         # crescendo na thread de varredura.
+        # Descoberto sob demanda pelo menu Visualizar, e esquecido quando a
+        # codificacao muda -- o dialeto foi lido com o codec antigo.
+        self._dialeto = None
         self.visualizador_sugerido = (
             self.provedor.visualizador_preferido()
             if self.provedor is not None else "texto")
@@ -334,6 +337,29 @@ class Aba(QWidget):
             if nome != "texto":
                 widget.atualizar()
 
+    def dialeto_csv(self):
+        """O dialeto deste arquivo, ou None quando nao parece tabela.
+
+        A AMOSTRA e' curta de proposito: 200 linhas dizem tanto quanto o
+        arquivo inteiro sobre qual e' o separador, e este metodo e' chamado
+        toda vez que o menu Visualizar abre.
+        """
+        if self._dialeto is not None:
+            return self._dialeto
+        from tfedit import csv_dialeto
+
+        try:
+            cruas = self.documento.faixa(0, 200)
+        except Exception:                     # noqa: BLE001 - nunca derrubar
+            return None
+        amostra = b"\n".join(cruas).decode(self.perfil.codec,
+                                            errors="replace")
+        dialeto = csv_dialeto.detectar(amostra)
+        if dialeto.colunas < 2 or dialeto.confianca < 50:
+            return None
+        self._dialeto = dialeto
+        return dialeto
+
     def _descartar_views_de_texto(self) -> None:
         """Views cuja leitura depende do PERFIL de codificacao.
 
@@ -341,6 +367,7 @@ class Aba(QWidget):
         sobre uma amostra decodificada com o codec ANTIGO, e mante-lo daria
         colunas erradas sem nenhum erro visivel.
         """
+        self._dialeto = None
         self.remover_view("tabela")
 
     # ==================================================================

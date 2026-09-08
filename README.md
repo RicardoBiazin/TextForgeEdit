@@ -67,7 +67,8 @@ Já dá para abrir, digitar e salvar:
 | `tfedit/realce/` + `tfedit/linguagens/` — realce, 24 linguagens | pronto |
 | `tfedit/tema.py` — temas claro/escuro, temas do usuário | pronto |
 | `tfedit/conversao.py` — reinterpretar e converter a codificação | pronto |
-| `tfedit/interface/visualizadores/` — camada de views + hexadecimal | pronto |
+| `tfedit/interface/visualizadores/` — views: hexadecimal e grade CSV | pronto |
+| `tfedit/csv_dialeto.py` — detecção de separador, aspas e cabeçalho | pronto |
 
 **Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
 começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
@@ -99,6 +100,41 @@ Ele lê o **documento**, não o disco: o que você digitou no modo texto e ainda
 não gravou aparece no dump. `Ctrl+G` vira "ir para deslocamento" e aceita `1024`
 ou `0x400`. Copiar tem teto de 1 MB — a área de transferência guarda o texto
 inteiro na memória.
+
+## Grade de CSV que não carrega o CSV
+
+A grade do TextForge não serve aqui, e não é questão de ajuste: ela fatia o
+texto inteiro em uma `str` por registro. Para 240 MB isso são vários GB.
+
+Aqui **o modelo não tem os dados**. `rowCount` é o total de linhas do índice, e
+cada célula é lida na hora por `Documento.faixa()`, em blocos de 256 linhas.
+Medido no teste: abrir um CSV de **200 mil linhas lê 456 delas**.
+
+**Editar uma célula troca só os bytes daquele campo.** Reconstruir o registro
+inteiro — o caminho do irmão — reescreveria todos os campos com o *quoting*
+mínimo do módulo `csv`, tirando aspas legítimas de campos que ninguém tocou. E
+o fim de linha vem da **própria linha**, não do perfil do arquivo: em arquivo
+com CRLF e LF misturados, usar o majoritário trocaria bytes que ninguém mandou
+trocar. Cada célula editada é **uma** operação de desfazer.
+
+**A detecção do separador é pela consistência, não pela frequência** — e ganhou
+um critério a mais que o irmão não tem. Num export brasileiro:
+
+```
+produto;preco;desconto          <- o cabeçalho tem ';' e nenhuma vírgula
+Parafuso 3,5mm 0;0,50;0,00      <- nos dados, ambos são uniformes
+```
+
+Vírgula e ponto e vírgula são os dois 100% consistentes, e a vírgula tem
+contagem *maior*. O que decide é a **presença**: um separador de verdade está em
+todas as linhas, inclusive no cabeçalho.
+
+**O que a grade não faz, e diz que não faz.** Um campo entre aspas pode conter
+quebra de linha; descobrir isso exigiria varrer do byte 0. Então aqui uma linha
+é um registro — e as linhas com aspas sem fechar aparecem marcadas e **não são
+editáveis**, com a explicação na dica. Não se corrompe o que não se consegue
+analisar. O cabeçalho também não ordena: um clique acionaria a leitura do
+arquivo inteiro.
 
 ## O rodapé é interativo
 

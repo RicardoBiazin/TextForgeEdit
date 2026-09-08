@@ -69,13 +69,17 @@ class ProvedorCsv(ProvedorDeLinguagem):
     def detectar_por_conteudo(self, amostra: str) -> int:
         """Consultado so' quando a extensao nao decidiu -- um `.dat` tabular.
 
-        O detector de dialeto do TextForge (`analisadores/de_csv.py`) NAO foi
-        portado: ele existe para escolher o separador da grade, e o
-        TextForgeEdit nao tem grade. Sem ele, um `.dat` tabular abre como texto
-        comum -- a deteccao pela extensao `.csv` continua valendo, que e' o
-        caso que importa aqui.
+        Delega ao detector de dialeto, que pontua pela CONSISTENCIA das
+        contagens e nao pela frequencia do caractere. A nota fica em 60: passa
+        do corte de 50 do registro, mas perde de qualquer provedor que
+        reconheca a propria sintaxe com certeza.
         """
-        return 0
+        from tfedit import csv_dialeto
+
+        try:
+            return 60 if csv_dialeto.parece_csv(amostra) else 0
+        except Exception:                     # noqa: BLE001 - nunca derrubar
+            return 0
 
 
 PROVEDORES = (ProvedorCsv(),)
