@@ -66,6 +66,17 @@ datas = [(str(_traducoes / f"{c}.qm"), "traducoes")
          if (_traducoes / f"{c}.qm").is_file()]
 print(f"[TextForgeEdit] {len(datas)} catalogo(s) de traducao no pacote")
 
+# Os temas do realce. Sem eles o .exe cai nas "cores de emergencia" de
+# `tema.embutido()` -- o programa abre, mas sem realce nenhum, e o defeito so'
+# aparece no executavel: rodando do fonte a pasta esta' la'.
+_temas = pathlib.Path("tfedit/recursos/temas")
+_json = sorted(_temas.glob("*.json"))
+if not _json:
+    raise SystemExit("[TextForgeEdit] tfedit/recursos/temas/ vazio: o .exe "
+                     "sairia sem realce. Empacotamento abortado.")
+datas += [(str(a), "tfedit/recursos/temas") for a in _json]
+print(f"[TextForgeEdit] {len(_json)} tema(s) no pacote")
+
 a = Analysis(
     ["app.py"],
     pathex=[],

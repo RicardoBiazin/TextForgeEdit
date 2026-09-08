@@ -60,13 +60,52 @@ Já dá para abrir, digitar e salvar:
 | `tfedit/log_interno.py` — log e captura de erro não tratado | pronto |
 | `tfedit/interface/` — abas, editor deslizante, barra de busca | pronto |
 | Empacotamento (`build.bat`, `.spec`, ZIP) | pronto |
-| Sessão restaurada, realce de sintaxe, instância única | não começou |
+| `tfedit/configuracao.py` — preferências, recentes, limites | pronto |
+| `tfedit/cli.py` — `--linha`, vários arquivos, recusa de dispositivos | pronto |
+| `tfedit/sessao.py` — sessão pelo diário de edições | pronto |
+| `tfedit/instancia_unica.py` — uma janela só, "Abrir com" | pronto |
+| `tfedit/realce/` + `tfedit/linguagens/` — realce, 24 linguagens | pronto |
+| `tfedit/tema.py` — temas claro/escuro, temas do usuário | pronto |
 
 **Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
 começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
 memória. O `QPlainTextEdit` segura 5.001 blocos — a fatia —, e não as 400.001
 linhas. Gravar preserva o CRLF das 400.000 linhas e deixa intactas as que não
 foram tocadas.
+
+## Realce de sintaxe numa fatia
+
+O motor veio inteiro do TextForge — o `Pintor`, as regras e os 24 provedores de
+linguagem. O que **não** veio de graça é o ponto em que os dois programas
+diferem:
+
+    no TextForge o QTextDocument tem o ARQUIVO;
+    aqui ele tem uma FATIA tirada do meio de um arquivo de 1 GB.
+
+O `QSyntaxHighlighter` começa o bloco 0 no contexto inicial da linguagem. Lá isso
+está certo por construção. Aqui, uma fatia que caia dentro de um `/* comentário */`
+aberto 3.000 linhas antes seria pintada como **código** — cores erradas
+justamente no trecho que a pessoa foi ler.
+
+A correção é a **semente de contexto**: antes de pintar, o editor roda a máquina
+de contextos sobre as 200 linhas anteriores à fatia (sem pintar nada) e usa o
+resultado como estado de entrada do bloco 0.
+
+```
+linha 200  /* abre o comentário          <- fora da fatia
+   ...     (as 200 linhas de contexto)
+────────── começo da fatia ──────────
+linha 350  ainda dentro do comentário    <- pintado como comentário, e não como código
+```
+
+São 200 linhas, e não o arquivo inteiro: varrer 500 mil linhas para descobrir a
+cor da primeira linha da fatia trocaria uma imprecisão visual por uma pausa a
+cada rolagem. O que não couber nelas volta ao contexto inicial da linguagem — o
+comportamento de antes.
+
+A suíte `teste_realce.py` não verifica só que o realce funciona: ela **desliga a
+semente e exige que o resultado mude**. Sem essa contraprova o teste passaria com
+o recurso quebrado.
 
 ## A janela viva
 

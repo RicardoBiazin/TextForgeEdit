@@ -47,12 +47,20 @@ estão proibidos no pacote.
 | textos de interface | **Acentuados**, sempre. Comentário, docstring e log podem ser ASCII — a convenção do código é essa —, mas o que o usuário lê, não. `teste_idioma.py` varre o fonte e falha se um texto de tela voltar a ter "nao", "você" sem acento ou "codificacao". |
 | `idioma.py` | Os `QTranslator` ficam guardados no `QApplication` (`_tradutores`). Numa variável local, o coletor do Python os destrói e os textos **voltam ao inglês** segundos depois de a janela abrir — sintoma que não aponta para a causa. |
 | `TextForgeEdit.spec` | Os `.qm` de tradução entram em `datas`. O PyInstaller **não** os inclui sozinho, e sem eles o pacote sai com "Save"/"Cancel" em inglês embora rode em português do fonte. |
+| `realce/pintor.py` | O bloco 0 **não** é o início do arquivo. Sem `pilha_inicial`, uma fatia que comece dentro de um comentário de bloco ou de uma string de várias linhas é pintada como código. Quem desliza a fatia tem de resemear (`editor._semear_realce`). |
+| `realce/pintor.py` | `simular()` roda a máquina de contextos **fora** de `highlightBlock`, onde `setFormat` é inválido — daí a trava `_simulando`. Removê-la não dá erro visível: pinta o documento errado. |
+| `tema.py` | Se os JSON de `recursos/temas/` faltarem, `embutido()` devolve o tema "Emergência" e o programa abre **sem realce**, sem mensagem de erro. Do fonte isso nunca acontece; no `.exe`, sim — por isso o `.spec` aborta se a pasta estiver vazia e a autoverificação recusa o tema "Emergência". |
 | `gravacao.py` | Espaço em disco é conferido **antes** do primeiro byte. Descobrir que faltou disco depois de escrever 200 MB é o pior momento possível. |
 
 ## Ao acrescentar um recurso
 
 1. O núcleo (`tfedit/*.py`, exceto interface) **não importa Qt**. É o que permite
    testá-lo sem tela e reaproveitá-lo depois.
+   **Exceção declarada:** `realce/`, `linguagens/` e `tema.py` importam
+   `QSyntaxHighlighter`, `QColor` e `QTextCharFormat`. São portes do TextForge,
+   onde já eram assim, e reescrevê-los para separar cor de regra multiplicaria a
+   distância entre os dois projetos a cada correção futura. Eles não importam
+   `QtWidgets`, e por isso ainda rodam sem janela.
 2. Teste novo entra em `tests/` e na lista `SUITES` de `rodar_todos.py`.
 3. Uma verificação que não pode falhar não vale nada. Se um teste passa com o
    código quebrado, ele está errado — enfraquecer a condição não é opção.

@@ -23,7 +23,9 @@ from PySide6.QtGui import (QFont, QFontMetrics, QKeySequence, QPainter,
                            QTextCursor)
 from PySide6.QtWidgets import QPlainTextEdit, QWidget
 
+from tfedit import tema as tema_mod
 from tfedit.janela import JanelaViva
+from tfedit.realce.pintor import Pintor
 
 
 class Margem(QWidget):
@@ -53,11 +55,13 @@ class EditorDeslizante(QPlainTextEdit):
     conteudo_voltou = Signal()
 
     def __init__(self, janela: JanelaViva, parent: QWidget | None = None,
-                 *, cfg: dict | None = None) -> None:
+                 *, cfg: dict | None = None, tema=None, provedor=None) -> None:
         super().__init__(parent)
         self.janela = janela
         self.cfg = cfg or {}
         self._deslizando = False
+        self.tema = tema if tema is not None else tema_mod.embutido("escuro")
+        self.provedor = provedor
 
         fonte = QFont(str(self.cfg.get("fonte", "Consolas")),
                       int(self.cfg.get("fonte_tamanho", 11)))
@@ -84,8 +88,42 @@ class EditorDeslizante(QPlainTextEdit):
         self.cursorPositionChanged.connect(self._ao_mover_cursor)
         self.textChanged.connect(self._ao_mudar_texto)
         self._ajustar_margem()
+        self.aplicar_cores()
+
+        # O realcador vive no QTextDocument do widget, que aqui e' a FATIA. E'
+        # o mesmo Pintor do TextForge; o que muda e' a semente de contexto, que
+        # `_semear_realce` refaz a cada deslizamento.
+        self.pintor = Pintor(self.document(), provedor, self.tema, self.cfg)
 
         self.recarregar(0)
+
+    def definir_linguagem(self, provedor) -> None:
+        """Troca a linguagem do realce (o menu Linguagem e a deteccao usam)."""
+        self.provedor = provedor
+        self.pintor.definir_provedor(provedor)
+        self._semear_realce()
+
+    def aplicar_cores(self) -> None:
+        """Fundo e texto do editor, vindos do tema."""
+        fundo = self.tema.cor("editor.fundo").name()
+        texto = self.tema.cor("editor.texto").name()
+        self.setStyleSheet(
+            f"QPlainTextEdit {{ background: {fundo}; color: {texto}; "
+            f"selection-background-color: "
+            f"{self.tema.cor('janela.destaque').name()}; }}")
+
+    def _semear_realce(self) -> None:
+        """Descobre em que contexto a fatia comeca e repinta.
+
+        Sem isto, uma fatia que caia dentro de um comentario de bloco seria
+        pintada como codigo -- ver o construtor do `Pintor`.
+        """
+        pintor = getattr(self, "pintor", None)
+        if pintor is None or pintor.regras is None:
+            return
+        anteriores = self.janela.linhas_antes_da_fatia()
+        pintor.pilha_inicial = pintor.simular(anteriores) if anteriores else None
+        pintor.rehighlight()
 
     # ==================================================================
     # A fatia
@@ -113,6 +151,7 @@ class EditorDeslizante(QPlainTextEdit):
         finally:
             self._deslizando = False
         self._ajustar_margem()
+        self._semear_realce()
 
     def sincronizar(self) -> bool:
         """Manda para a tabela de pecas o que foi editado na fatia."""

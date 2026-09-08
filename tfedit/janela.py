@@ -113,6 +113,34 @@ class JanelaViva:
         self.recorte = Recorte(primeira, quantas, inicio, fim, texto, bruto)
         return self.recorte
 
+    #: Quantas linhas antes da fatia o realce olha para achar o contexto.
+    #:
+    #: Um teto, e nao o arquivo inteiro: varrer 500 mil linhas para descobrir a
+    #: cor da primeira linha da fatia trocaria uma imprecisao visual por uma
+    #: pausa a cada rolagem. Duzentas linhas resolvem o caso comum -- um
+    #: comentario de bloco, uma string de varias linhas, um <script> -- e o que
+    #: nao couber nelas fica com o contexto inicial da linguagem, que e'
+    #: exatamente o comportamento de antes desta funcao existir.
+    LINHAS_DE_CONTEXTO = 200
+
+    def linhas_antes_da_fatia(self, quantas: int = LINHAS_DE_CONTEXTO
+                              ) -> list[str]:
+        """As linhas imediatamente anteriores a fatia, para semear o realce."""
+        if self.recorte is None or self.recorte.primeira_linha <= 0:
+            return []
+        primeira = max(0, self.recorte.primeira_linha - quantas)
+        if primeira >= self.recorte.primeira_linha:
+            return []
+        inicio = self.documento.offset_da_linha(primeira)
+        bruto = self.documento.ler(inicio, self.recorte.inicio_em_bytes)
+        texto = codificacao.para_lf(self._decodificar(bruto))
+        # `split` e nao `splitlines`: um "\x0c" no meio de um log nao pode virar
+        # quebra de linha aqui, ou a contagem sairia diferente da do indice.
+        linhas = texto.split("\n")
+        if linhas and linhas[-1] == "":
+            linhas.pop()
+        return linhas
+
     def _decodificar(self, bruto: bytes) -> str:
         # `errors="replace"` porque pintar a tela NUNCA pode levantar: um byte
         # invalido no meio de um log de 1 GB nao pode impedir de ver o resto. A

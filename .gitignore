@@ -13,3 +13,4 @@ dist/
 
 # Fixtures grandes geradas pelos testes
 tests/fixtures/
+tests/ajudante_entregar.py

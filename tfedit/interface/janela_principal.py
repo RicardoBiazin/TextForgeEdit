@@ -10,13 +10,16 @@ from __future__ import annotations
 import pathlib
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QAction, QKeySequence, QTextCursor
+from PySide6.QtGui import (QAction, QActionGroup, QKeySequence,
+                           QTextCursor)
 from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox,
                                QProgressBar, QStatusBar, QTabWidget,
                                QVBoxLayout, QWidget)
 
 from tfedit import (APP, AUTOR, VERSAO, busca, configuracao,
-                    log_interno)
+                    linguagens, log_interno, sessao as sessao_mod,
+                    tema as tema_mod)
+from tfedit.linguagens import registro as registro_de_linguagens
 from tfedit.gravacao import FalhaNaTroca, SemEspaco
 from tfedit.original import ArquivoMudou
 from tfedit.interface.aba import Aba
@@ -69,6 +72,10 @@ class JanelaPrincipal(QMainWindow):
         self.abas.tabCloseRequested.connect(self.fechar_aba)
         self.abas.currentChanged.connect(self._ao_trocar_de_aba)
 
+        # O tema e' resolvido UMA vez e emprestado a cada aba: dois temas na
+        # mesma janela seria o mesmo texto com duas cores de fundo.
+        self.tema = tema_mod.resolver(str(self.cfg.get("tema", "sistema")))
+
         self.barra_busca = BarraDeBusca(self)
         self.barra_busca.hide()
         self.barra_busca.procurar.connect(self._procurar)
@@ -89,6 +96,9 @@ class JanelaPrincipal(QMainWindow):
         self.barra = QStatusBar(self)
         self.setStatusBar(self.barra)
         self.rotulo_posicao = QLabel("", self)
+        self.rotulo_linguagem = QLabel("", self)
+        self.rotulo_linguagem.setToolTip(
+            "Linguagem do realce. Menu Linguagem para trocar.")
         self.rotulo_codec = QLabel("", self)
         self.rotulo_memoria = QLabel("", self)
         self.progresso = QProgressBar(self)
@@ -96,8 +106,8 @@ class JanelaPrincipal(QMainWindow):
         self.progresso.setTextVisible(False)
         self.progresso.hide()
         self.barra.addPermanentWidget(self.progresso)
-        for rotulo in (self.rotulo_posicao, self.rotulo_codec,
-                       self.rotulo_memoria):
+        for rotulo in (self.rotulo_posicao, self.rotulo_linguagem,
+                       self.rotulo_codec, self.rotulo_memoria):
             self.barra.addPermanentWidget(rotulo)
 
         # `addPermanentWidget`, e nao `addWidget`: a area dos widgets NAO
@@ -110,6 +120,110 @@ class JanelaPrincipal(QMainWindow):
         self.credito.clicado.connect(self.sobre)
         self.barra.addPermanentWidget(self.credito)
         self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para cá")
+
+    # ==================================================================
+    # Linguagem
+    # ==================================================================
+
+    def _montar_menu_linguagem(self) -> None:
+        """Monta o menu SÓ quando ele abre.
+
+        Vinte e quatro ações criadas no arranque custariam tempo de abertura
+        para um menu que a maioria das sessões nunca usa.
+        """
+        self.menu_linguagem.clear()
+        aba = self.aba_atual
+        if aba is None:
+            acao = self.menu_linguagem.addAction("(nenhum arquivo aberto)")
+            acao.setEnabled(False)
+            return
+
+        linguagens.carregar_embutidos()
+        atual = aba.provedor.nome if aba.provedor is not None else ""
+        grupo = QActionGroup(self.menu_linguagem)
+        grupo.setExclusive(True)
+        for nome in sorted(registro_de_linguagens.REGISTRO.nomes()):
+            acao = self.menu_linguagem.addAction(nome)
+            acao.setCheckable(True)
+            acao.setChecked(nome == atual)
+            acao.triggered.connect(
+                lambda _c=False, n=nome: self._trocar_linguagem(n))
+            grupo.addAction(acao)
+
+    def _trocar_linguagem(self, nome: str) -> None:
+        aba = self.aba_atual
+        if aba is None:
+            return
+        aba.definir_linguagem(registro_de_linguagens.REGISTRO.por_nome(nome))
+        self.rotulo_linguagem.setText(aba.nome_da_linguagem)
+
+    # ==================================================================
+    # Sessão
+    # ==================================================================
+
+    def restaurar_sessao(self) -> int:
+        """Reabre as abas da sessão anterior. Devolve quantas voltaram."""
+        if not self.cfg.get("restaurar_sessao", True):
+            return 0
+        guardadas = sessao_mod.ler()
+        if not guardadas:
+            return 0
+
+        voltaram = 0
+        recusadas = []
+        for guardada in guardadas:
+            if not self.abrir_arquivo(guardada.caminho):
+                continue
+            aba = self.aba_atual
+            voltaram += 1
+            if guardada.tem_pendencia:
+                # Reaplicar peças que apontam para offsets de um arquivo que
+                # mudou escreveria conteúdo certo em LUGAR ERRADO. Recusar e
+                # abrir limpo é o lado seguro: perder as edições pendentes é
+                # ruim, misturar dois arquivos é pior.
+                if not guardada.arquivo_confere():
+                    recusadas.append(aba.nome)
+                elif aba.documento.aplicar_diario(guardada.diario):
+                    aba.editor.recarregar(guardada.linha)
+                    aba.titulo_mudou.emit()
+            if guardada.linha:
+                aba.editor.ir_para_linha(guardada.linha)
+
+        sessao_mod.esquecer()
+        if recusadas:
+            QMessageBox.warning(
+                self, "Alterações não recuperadas",
+                "Estes arquivos mudaram no disco desde a última sessão, e as "
+                "edições pendentes <b>não</b> foram reaplicadas:<br><br>"
+                + "<br>".join(f"• {n}" for n in recusadas)
+                + "<br><br>Reaplicá-las escreveria o texto no lugar errado. "
+                  "Eles foram abertos como estão no disco.")
+        if voltaram:
+            log.info("sessão restaurada: %d aba(s)", voltaram)
+        return voltaram
+
+    def _guardar_sessao(self) -> None:
+        sessao_mod.gravar(sessao_mod.capturar(self.todas_as_abas()))
+
+    # ==================================================================
+    # Pedido de outra instância
+    # ==================================================================
+
+    def atender_pedido(self, pedido: dict) -> None:
+        """Abre o que outra instância mandou e traz a janela para a frente."""
+        for caminho in pedido.get("arquivos", []) or []:
+            self.abrir_arquivo(str(caminho))
+        linha = int(pedido.get("linha", 0) or 0)
+        if linha and self.aba_atual is not None:
+            self.aba_atual.editor.ir_para_linha(linha - 1)
+
+        # Trazer para a frente: sem isto o usuário clica em "Abrir com", o
+        # arquivo abre numa janela que está atrás de tudo, e parece que nada
+        # aconteceu.
+        if self.isMinimized():
+            self.showNormal()
+        self.raise_()
+        self.activateWindow()
 
     # ==================================================================
     # Menu
@@ -160,6 +274,9 @@ class JanelaPrincipal(QMainWindow):
         localizar.addSeparator()
         acao("&Ir para linha...", "Ctrl+G", self.ir_para_linha, localizar)
 
+        self.menu_linguagem = self.menuBar().addMenu("Lin&guagem")
+        self.menu_linguagem.aboutToShow.connect(self._montar_menu_linguagem)
+
         ajuda = self.menuBar().addMenu("A&juda")
         acao("&Sobre...", "", self.sobre, ajuda)
 
@@ -192,7 +309,7 @@ class JanelaPrincipal(QMainWindow):
                 return True
 
         try:
-            aba = Aba(caminho, self.cfg, self)
+            aba = Aba(caminho, self.cfg, self, tema=self.tema)
         except OSError as exc:
             log.warning("nao foi possivel abrir %s: %s", caminho, exc)
             QMessageBox.warning(self, "Não foi possível abrir", str(exc))
@@ -260,6 +377,7 @@ class JanelaPrincipal(QMainWindow):
             return
         self.rotulo_codec.setText(
             f"{aba.perfil.rotulo}  {aba.perfil.rotulo_eol}")
+        self.rotulo_linguagem.setText(aba.nome_da_linguagem)
         self._mostrar_posicao(aba.editor.linha_atual_no_documento(), 0)
         self.progresso.setVisible(aba.indexando_agora)
         self._atualizar_titulos()
@@ -582,8 +700,14 @@ class JanelaPrincipal(QMainWindow):
     # ==================================================================
 
     def closeEvent(self, evento) -> None:                 # noqa: N802 - Qt
+        # A sessão é capturada ANTES de perguntar sobre pendências: se o
+        # usuário cancelar o fechamento, nada se perdeu, e se ele descartar as
+        # alterações a sessão guardada ainda registra onde ele estava.
         for aba in self.todas_as_abas():
             aba.editor.sincronizar()
+        self._guardar_sessao()
+
+        for aba in self.todas_as_abas():
             if aba.modificado:
                 self.abas.setCurrentWidget(aba)
                 if not self._perguntar_para_fechar(aba):

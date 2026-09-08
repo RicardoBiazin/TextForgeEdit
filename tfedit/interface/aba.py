@@ -24,7 +24,8 @@ import pathlib
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from tfedit import codificacao, log_interno
+from tfedit import codificacao, linguagens, log_interno
+from tfedit.linguagens import registro as registro_de_linguagens
 from tfedit.gravacao import gravar
 from tfedit.interface.editor import EditorDeslizante
 from tfedit.interface.indexador import PARTIDA, Indexador
@@ -48,7 +49,7 @@ class Aba(QWidget):
     indexou = Signal(int)
 
     def __init__(self, caminho, cfg: dict | None = None,
-                 parent: QWidget | None = None) -> None:
+                 parent: QWidget | None = None, *, tema=None) -> None:
         super().__init__(parent)
         self.cfg = cfg or {}
         self.caminho = pathlib.Path(caminho)
@@ -66,7 +67,9 @@ class Aba(QWidget):
         self.janela = JanelaViva(
             self.documento, self.perfil,
             linhas=int(self.cfg.get("linhas_da_janela", 5000)))
-        self.editor = EditorDeslizante(self.janela, self, cfg=self.cfg)
+        self.provedor = self._resolver_linguagem()
+        self.editor = EditorDeslizante(self.janela, self, cfg=self.cfg,
+                                       tema=tema, provedor=self.provedor)
         self.editor.posicao_mudou.connect(self.posicao_mudou)
         self.editor.sujou.connect(self.titulo_mudou)
         self.editor.conteudo_voltou.connect(self.titulo_mudou)
@@ -224,3 +227,33 @@ class Aba(QWidget):
         if self.original is not None:
             self.original.fechar()
         log.info("fechado %s", self.nome)
+
+    # ==================================================================
+    # Linguagem
+    # ==================================================================
+
+    def _resolver_linguagem(self):
+        """Provedor de realce deste arquivo, pela extensao e pelo comeco dele.
+
+        A AMOSTRA e' curta de proposito. No TextForge o documento inteiro esta'
+        na memoria e olhar mais nao custa; aqui o arquivo pode ter 1 GB, e o
+        shebang, o `<?xml` e o `<!DOCTYPE` -- que e' o que a deteccao por
+        conteudo procura -- estao todos nos primeiros bytes.
+        """
+        linguagens.carregar_embutidos()
+        try:
+            amostra = self.original.ler(0, 4096).decode(
+                self.perfil.codec, errors="replace")
+        except Exception:                     # noqa: BLE001 - nunca impedir abrir
+            amostra = ""
+        return registro_de_linguagens.por_caminho(self.caminho, amostra)
+
+    def definir_linguagem(self, provedor) -> None:
+        self.provedor = provedor
+        self.editor.definir_linguagem(provedor)
+        log.info("linguagem de %s: %s", self.nome,
+                 provedor.nome if provedor else "nenhuma")
+
+    @property
+    def nome_da_linguagem(self) -> str:
+        return self.provedor.nome if self.provedor is not None else "Texto"

@@ -24,6 +24,13 @@ OBRIGATORIOS = (
     "tfedit.interface.indexador", "tfedit.interface.aba",
     "tfedit.interface.barra_busca", "tfedit.busca", "tfedit.log_interno",
     "tfedit.idioma", "tfedit.cli", "tfedit.configuracao",
+    "tfedit.sessao", "tfedit.instancia_unica",
+    # O realce. `tfedit.linguagens` carrega os 24 provedores por import
+    # dinamico, e `tfedit.recursos` acha os temas dentro do .exe -- os dois
+    # sao pontos cegos da analise estatica do PyInstaller.
+    "tfedit.tema", "tfedit.recursos", "tfedit.indentacao",
+    "tfedit.linguagens", "tfedit.linguagens.registro",
+    "tfedit.realce.pintor", "tfedit.realce.regras",
 )
 
 
@@ -94,6 +101,26 @@ def autoverificacao() -> int:
         print("  obtido:", botoes)
         return 1
 
+    # O REALCE, com os dois pontos que so' falham no .exe: os temas vem de
+    # `sys._MEIPASS`, e os 24 provedores entram por import dinamico. Rodando do
+    # fonte os dois funcionam mesmo se o .spec estiver errado -- e' aqui, dentro
+    # do executavel, que a falta aparece.
+    from tfedit import linguagens as _lg, tema as _tm
+    from tfedit.linguagens.registro import REGISTRO as _REG
+
+    _tema = _tm.embutido("escuro")
+    if _tema.nome == "Emergencia":
+        print("AUTOVERIFICACAO FALHOU: os temas nao vieram no pacote; o "
+              "programa abriria sem realce")
+        print("  procurado em:", _tm.recursos.caminho("temas"))
+        return 1
+
+    _lg.carregar_embutidos()
+    if len(_REG.nomes()) < 20:
+        print("AUTOVERIFICACAO FALHOU: so'", len(_REG.nomes()),
+              "provedores de linguagem foram carregados")
+        return 1
+
     janela = JanelaPrincipal()          # monta menus, barra e widgets
     janela.close()
     del aplicacao
@@ -134,7 +161,8 @@ def main() -> int:
 
     from PySide6.QtWidgets import QApplication
 
-    from tfedit import APP, VERSAO, cli, configuracao, idioma, log_interno
+    from tfedit import (APP, VERSAO, cli, configuracao, idioma,
+                        instancia_unica, log_interno)
     from tfedit.interface.janela_principal import JanelaPrincipal
 
     # O log e a captura de erro entram ANTES de qualquer widget: uma excecao na
@@ -156,8 +184,28 @@ def main() -> int:
         QMessageBox.information(None, APP, cli.AJUDA.replace(chr(10), "<br>"))
         return 0
 
-    janela = JanelaPrincipal(configuracao.carregar())
+    # Uma janela só: se já houver instância, entrega os arquivos e sai. Sem
+    # isto, selecionar 12 arquivos no Explorer dispara 12 processos.
+    servidor = instancia_unica.Servidor()
+    if not servidor.escutar():
+        if instancia_unica.entregar({"arquivos": pedido.arquivos,
+                                     "linha": pedido.linha,
+                                     "coluna": pedido.coluna}):
+            return 0
+        # Havia um canal ocupado, mas ninguém atendeu -- pipe órfão de um
+        # processo que morreu. Abrir normalmente é melhor que não abrir.
+        log_interno.obter(__name__).warning(
+            "canal ocupado e sem resposta; abrindo como instância comum")
+
+    cfg = configuracao.carregar()
+    janela = JanelaPrincipal(cfg)
+    servidor.pedido_recebido.connect(janela.atender_pedido)
     janela.show()
+
+    # A sessão volta antes dos arquivos da linha de comando: assim o arquivo
+    # que o usuário PEDIU agora fica em foco, e não uma aba antiga.
+    if not pedido.arquivos:
+        janela.restaurar_sessao()
     # Os arquivos da linha de comando entram DEPOIS de a janela aparecer: a
     # janela vazia surge na hora, e cada arquivo entra em seguida com a barra de
     # progresso da indexacao. Abrir antes deixaria o usuario olhando para a area

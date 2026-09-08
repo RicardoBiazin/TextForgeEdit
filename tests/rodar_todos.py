@@ -24,6 +24,7 @@ LIMITE_POR_SUITE_S = 180
 LIMITE_PROPRIO_S: dict[str, int] = {
     # Gera dezenas de MB em %TEMP% e mede memoria.
     "teste_pecas.py": 600,
+    "teste_sessao.py": 300,
     "teste_janela_principal.py": 400,
 }
 
@@ -38,8 +39,12 @@ SUITES = [
      "ponta a ponta: abrir, digitar com acento, deslizar, gravar"),
     ("teste_busca.py",
      "localizar e substituir no documento inteiro, fora da fatia"),
+    ("teste_sessao.py",
+     "sessao pelo diario, assinatura e instancia unica entre processos"),
     ("teste_idioma.py",
      "portugues do Brasil: acentos nos textos e nos dialogos do Qt"),
+    ("teste_realce.py",
+     "realce de sintaxe na fatia: 24 linguagens e a semente de contexto"),
     ("teste_janela_principal.py",
      "abas, salvar como, arrastar-e-soltar, busca pela barra, log"),
 ]

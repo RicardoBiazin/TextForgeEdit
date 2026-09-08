@@ -557,3 +557,79 @@ class Documento:
     def blocos(self):
         """Gera as pecas na ordem do documento, para `gravacao.py`."""
         return list(self._pecas)
+
+    # ==================================================================
+    # Diario, para a sessao (ver `sessao.py`)
+    # ==================================================================
+
+    def diario(self) -> dict:
+        """As edicoes pendentes como DADOS, em poucos KB.
+
+        E' a lista de PECAS mais o buffer do que foi digitado -- e nao o
+        conteudo do documento. As pecas ORIGINAIS sao so' coordenadas: o texto
+        delas continua no arquivo. Um documento de 1 GB com cinquenta correcoes
+        cabe em alguns KB, e e' isso que permite guardar a sessao de um editor
+        de arquivo grande sem copiar o arquivo.
+
+        O buffer vai em base64 porque ele e' BYTES, e nao texto: ele pode estar
+        em qualquer codificacao, inclusive uma em que a sequencia nao seja
+        decodificavel isoladamente.
+        """
+        import base64
+
+        return {
+            "pecas": [{"fonte": p.fonte, "inicio": p.inicio,
+                       "tamanho": p.tamanho, "linhas": p.linhas}
+                      for p in self._pecas],
+            "adicionado": base64.b64encode(bytes(self._adicionado)).decode(),
+            "tamanho": self._tamanho,
+            "linhas": self._linhas,
+        }
+
+    def aplicar_diario(self, dados: dict) -> bool:
+        """Restaura um diario. Quem chama JA' conferiu a assinatura do arquivo.
+
+        Devolve False quando o diario nao serve para este arquivo. Nao levanta:
+        uma sessao estragada nao pode impedir o editor de abrir, e o custo de
+        recusar e' o usuario reeditar -- o custo de aceitar errado e' escrever
+        conteudo certo em lugar errado.
+        """
+        import base64
+
+        try:
+            pecas = [Peca(str(d["fonte"]), int(d["inicio"]), int(d["tamanho"]),
+                          int(d["linhas"]))
+                     for d in dados.get("pecas", [])]
+            adicionado = bytearray(base64.b64decode(dados.get("adicionado",
+                                                              "")))
+        except (KeyError, TypeError, ValueError) as erro:
+            log.warning("diario ilegivel: %s", erro)
+            return False
+        if not pecas:
+            return False
+
+        # Conferencia de coerencia: as pecas ORIGINAIS nao podem apontar para
+        # alem do arquivo, e as ADICIONADAS nao podem apontar para alem do
+        # buffer. Um diario que nao passe aqui produziria leitura de lixo.
+        for peca in pecas:
+            limite = (self.original.tamanho if peca.fonte == ORIGINAL
+                      else len(adicionado))
+            if peca.inicio < 0 or peca.tamanho < 0 or \
+                    peca.inicio + peca.tamanho > limite:
+                log.warning("diario incoerente: peca %s alem do limite %d",
+                            peca, limite)
+                return False
+
+        self._pecas = pecas
+        self._adicionado = adicionado
+        self._tamanho = sum(p.tamanho for p in pecas)
+        self._linhas = sum(p.linhas for p in pecas)
+        self._cursor = None
+        # A pilha de desfazer NAO e' restaurada: ela guarda operacoes, e
+        # reexecuta-las sobre um estado ja' final desfaria o que acabou de ser
+        # recuperado. Uma edicao registrada mantem o documento marcado como
+        # alterado, que e' o que importa para o "*" no titulo e para o aviso ao
+        # fechar.
+        self._feitas = [Edicao("recuperado", 0)]
+        self._desfeitas.clear()
+        return True

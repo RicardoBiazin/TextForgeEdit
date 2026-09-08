@@ -87,6 +87,16 @@ def padrao() -> dict[str, Any]:
     }
 
 
+def pasta_de_temas() -> pathlib.Path:
+    """`%APPDATA%\\TextForgeEdit\\temas`: temas do usuario, alem dos embutidos.
+
+    Nao e' criada aqui. Quem le' um tema apenas varre a pasta, e uma pasta
+    inexistente devolve lista vazia -- criar diretorio como efeito colateral de
+    uma leitura e' surpresa desnecessaria.
+    """
+    return pasta_de_dados() / "temas"
+
+
 def carregar() -> dict[str, Any]:
     """Lê o config. Volta ao padrão, com aviso, se ele não servir."""
     valores = padrao()
