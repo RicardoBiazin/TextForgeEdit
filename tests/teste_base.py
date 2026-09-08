@@ -298,6 +298,58 @@ def testar_assinatura() -> None:
               "a assinatura de um arquivo que não existe não combina com nada")
 
 
+def testar_script_de_associacao() -> None:
+    """Os dois defeitos que fizeram o script do projeto irmao nunca funcionar.
+
+    Nao da' para rodar PowerShell dentro desta suite sem tornar tudo lento e
+    dependente do sistema. O que se pode guardar -- e e' o que basta -- sao as
+    DUAS linhas cuja ausencia quebra o script inteiro, em silencio.
+    """
+    secao("*** O script de associacao do Windows ***")
+
+    raiz = pathlib.Path(__file__).resolve().parent.parent
+    alvo = raiz / "associar.ps1"
+    checa(alvo.is_file(), "o associar.ps1 existe")
+    if not alvo.is_file():
+        return
+
+    bruto = alvo.read_bytes()
+    # O PowerShell 5.1 le' arquivo SEM BOM como ANSI, e todo acento das
+    # mensagens vira lixo na tela.
+    checa(bruto.startswith(b"\xef\xbb\xbf"),
+          "*** esta em UTF-8 COM BOM: sem ele o PowerShell 5.1 le como ANSI e "
+          "os acentos viram lixo ***")
+
+    texto = bruto.decode("utf-8-sig")
+
+    # Um parametro com `ValueFromRemainingArguments` fica DE FORA da ligacao
+    # posicional. Sem `PositionalBinding = $false`, `$Exe` vira o primeiro
+    # posicional e `.\associar.ps1 .txt .csv` entende `.txt` como o CAMINHO DO
+    # EXECUTAVEL -- o script responde "nao encontrei o .exe" sem dar pista
+    # nenhuma do porque.
+    checa("PositionalBinding = $false" in texto,
+          "*** tem PositionalBinding = $false: sem ele a primeira extensao e "
+          "silenciosamente lida como o caminho do executavel ***")
+    checa("ValueFromRemainingArguments" in texto,
+          "e as extensoes vem por ValueFromRemainingArguments")
+
+    # O menu de contexto mora numa chave chamada `*`, e o provedor de registro
+    # do PowerShell trata isso como CURINGA: sem -LiteralPath ele varre as
+    # milhares de chaves de Software\Classes e o script parece travado.
+    for chamada in ("Test-Path -LiteralPath", "Set-ItemProperty -LiteralPath",
+                    "New-ItemProperty -LiteralPath"):
+        checa(chamada in texto,
+              f"*** usa `{chamada}`: a chave `*` do menu de contexto seria "
+              f"tratada como curinga ***")
+    checa("New-Item -Path $caminho -Force" not in texto,
+          "*** e NAO usa `New-Item -Path` com o caminho da chave `*`, que "
+          "globa do mesmo jeito ***")
+
+    # E o que o script promete sobre o programa padrao.
+    checa("UserChoice" in texto,
+          "o cabecalho explica por que o programa PADRAO nao sai daqui")
+
+
 def main() -> int:
     testar_configuracao()
     testar_recentes()
@@ -305,6 +357,7 @@ def main() -> int:
     testar_trava_do_mapeamento()
     testar_soltar_e_retomar()
     testar_assinatura()
+    testar_script_de_associacao()
     return resumir()
 
 

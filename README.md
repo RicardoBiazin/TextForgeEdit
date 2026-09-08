@@ -163,6 +163,34 @@ de 100 MB o arquivo abre como arquivo comum, onde as garantias de memória do
 editor voltam a valer. Um `.zip` renomeado para `.xlsx` também é recusado — a
 detecção olha o conteúdo.
 
+## Associar às extensões do Windows
+
+```powershell
+.ssociar.ps1 .txt .csv .log .dat
+```
+
+Escreve **apenas em HKCU** — sem administrador, nada fora do seu perfil. Usa
+`OpenWithProgids`, que **acrescenta** o TextForgeEdit à lista "Abrir com" sem
+roubar o programa padrão de ninguém. Para trocar de editor em vez de acumular
+os dois, `-TirarDaLista TextForge.exe`. Para desfazer, `-Remover`.
+
+**O programa padrão não sai daqui, e não é limitação do script.** Desde o
+Windows 10 o `UserChoice` de cada extensão é protegido por um hash amarrado ao
+seu usuário, à extensão e ao horário: escrever ali direto é revertido pelo
+sistema. Para tornar o TextForgeEdit padrão, é uma vez por extensão em
+*Abrir com → Escolher outro aplicativo → Sempre*.
+
+Duas armadilhas do PowerShell estão travadas por teste, porque as duas quebram
+o script **em silêncio**:
+
+- Um parâmetro com `ValueFromRemainingArguments` fica **fora** da ligação
+  posicional. Sem `PositionalBinding = $false`, `.ssociar.ps1 .txt` entende
+  `.txt` como o *caminho do executável* — e o script responde "não encontrei o
+  .exe" sem dar pista do porquê.
+- O menu de contexto mora numa chave chamada `*`, e o provedor de registro do
+  PowerShell trata isso como **curinga**: sem `-LiteralPath` ele varre as
+  milhares de chaves de `Software\Classes` e o script parece travado.
+
 ## Formatar código
 
 Menu **Formatar**: documento (`Shift+Alt+F`), seleção, compactar e validar
