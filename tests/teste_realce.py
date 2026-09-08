@@ -297,6 +297,59 @@ def testar_linha_gigante() -> None:
           f"(um JSON minificado nao pode travar a rolagem)")
 
 
+def testar_repintar_nao_suja() -> None:
+    secao("*** Pintar cor nao e' editar ***")
+
+    with pasta_temporaria() as pasta:
+        aba = _abrir(pasta, "limpo.py", 'x = 1\n' * 300)
+        try:
+            checa(not aba.modificado, "recem-aberto, nada pendente")
+
+            # `rehighlight()` aplica os formatos dentro de um bloco de edicao
+            # do documento, e isso dispara `textChanged`. Contar isso como
+            # digitacao marcava a aba como suja logo depois de gravar: o
+            # arquivo ia para o disco e o titulo voltava com asterisco.
+            aba.editor._semear_realce()
+            checa(not aba.editor.sujo,
+                  "*** semear o realce NAO marca a fatia como suja ***")
+            checa(not aba.modificado,
+                  "*** e a aba continua sem pendencia ***")
+
+            aba.editor.insertPlainText("y")
+            checa(aba.editor.sujo,
+                  "mas digitar de verdade continua marcando")
+        finally:
+            aba.encerrar()
+
+
+def testar_realce_nao_engole_a_edicao() -> None:
+    secao("*** O texto digitado chega a tabela de pecas ***")
+
+    with pasta_temporaria() as pasta:
+        aba = _abrir(pasta, "codigo.py", 'linha = 0\n' * 300)
+        try:
+            aba.editor.ir_para_linha(5)
+            cursor = aba.editor.textCursor()
+            cursor.movePosition(cursor.MoveOperation.EndOfBlock)
+            aba.editor.setTextCursor(cursor)
+            for caractere in "  # ação":
+                aba.editor.insertPlainText(caractere)
+            aba.editor.sincronizar()
+
+            linha = aba.documento.linha(5).decode("utf-8", "replace")
+            # Com o realce ligado, `document().isModified()` deixou de servir
+            # como "ha' algo para sincronizar": o QSyntaxHighlighter guarda e
+            # RESTAURA esse sinalizador em volta do proprio reformatar. O
+            # texto ficava na tela e nunca chegava a tabela -- salvar gravava
+            # o arquivo sem a edicao.
+            checa("ação" in linha,
+                  f"*** o que foi digitado esta' na tabela: {linha.strip()!r} ***")
+            checa(linha.startswith("linha = 0"),
+                  f"*** e na ORDEM certa, no fim da linha: {linha.strip()!r} ***")
+        finally:
+            aba.encerrar()
+
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -316,6 +369,8 @@ def main() -> int:
     testar_trocar_de_linguagem()
     testar_simular_nao_pinta()
     testar_linha_gigante()
+    testar_repintar_nao_suja()
+    testar_realce_nao_engole_a_edicao()
     return resumir()
 
 

@@ -107,16 +107,28 @@ def blocos(documento: Documento, cancelar=None):
 
 
 def gravar(caminho, documento: Documento, *, antes_de_trocar=None,
-           cancelar=None) -> int:
-    """Grava o documento. Devolve quantos bytes foram escritos."""
+           cancelar=None, produtor=None, previsto=None) -> int:
+    """Grava o documento. Devolve quantos bytes foram escritos.
+
+    `produtor` troca a fonte dos bytes -- e' assim que a conversao de
+    codificacao (`conversao.py`) reaproveita a troca atomica, o retry e a
+    conferencia de espaco sem duplicar nada. Ele recebe `(documento, cancelar)`
+    e devolve um iterador de bytes.
+
+    `previsto` e' o tamanho ESPERADO do resultado, para a conferencia de
+    espaco. O padrao -- o tamanho do documento -- so' vale quando os bytes
+    saem como entraram; convertendo para UTF-16 o arquivo dobra, e conferir
+    pelo tamanho antigo deixaria o disco encher no meio da escrita.
+    """
     alvo = pathlib.Path(caminho)
-    conferir_espaco(alvo, documento.tamanho)
+    conferir_espaco(alvo, documento.tamanho if previsto is None else previsto)
     temporario = alvo.with_name(alvo.name + SUFIXO)
+    fonte = produtor if produtor is not None else blocos
     escritos = 0
 
     try:
         with open(temporario, "wb") as saida:
-            for bloco in blocos(documento, cancelar):
+            for bloco in fonte(documento, cancelar):
                 if bloco:
                     saida.write(bloco)
                     escritos += len(bloco)

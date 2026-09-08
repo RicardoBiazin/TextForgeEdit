@@ -79,6 +79,11 @@ if errorlevel 1 (
 if exist build rmdir /s /q build
 if exist dist rmdir /s /q dist
 
+rem O __pycache__ tambem sai. Um .pyc velho de tfedit\__init__.py ja'
+rem produziu um ZIP com o numero de versao ANTERIOR ao lado de um .exe
+rem com o numero novo -- o pacote saiu rotulado errado, e nada falhou.
+for %%p in (tfedit tfedit\interface tfedit\realce tfedit\linguagens tests ferramentas .) do @if exist "%%p\__pycache__" rmdir /s /q "%%p\__pycache__"
+
 if exist dist (
     echo.
     echo BUILD ABORTADO: nao foi possivel apagar dist\ por completo.

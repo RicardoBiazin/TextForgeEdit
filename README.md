@@ -66,12 +66,44 @@ Já dá para abrir, digitar e salvar:
 | `tfedit/instancia_unica.py` — uma janela só, "Abrir com" | pronto |
 | `tfedit/realce/` + `tfedit/linguagens/` — realce, 24 linguagens | pronto |
 | `tfedit/tema.py` — temas claro/escuro, temas do usuário | pronto |
+| `tfedit/conversao.py` — reinterpretar e converter a codificação | pronto |
 
 **Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
 começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
 memória. O `QPlainTextEdit` segura 5.001 blocos — a fatia —, e não as 400.001
 linhas. Gravar preserva o CRLF das 400.000 linhas e deixa intactas as que não
 foram tocadas.
+
+## Codificação: dois verbos diferentes
+
+O menu **Codificação** tem duas coisas que costumam ser confundidas, e a
+confusão é o defeito clássico aqui:
+
+| | O que faz | O arquivo no disco |
+|---|---|---|
+| **Reinterpretar como** | lê os mesmos bytes de outro jeito | **não muda** |
+| **Converter para** | reescreve o arquivo na codificação escolhida | **todo byte muda** |
+
+"Abri e veio tudo com acento quebrado" é caso de *reinterpretar*: o arquivo
+estava certo, a leitura é que errou. "Preciso mandar este export do ERP em
+UTF-8" é caso de *converter*.
+
+**Converter é caro aqui, por construção.** A gravação normal copia os trechos
+intactos byte a byte, direto do mmap — é o que faz salvar 240 MB com três
+parágrafos alterados custar segundos. Não existe conversão que preserve os
+bytes: `á` em ISO-8859-1 é um byte e em UTF-8 são dois. O arquivo inteiro passa
+por decodificar e recodificar. Continua O(1) em **memória**, por streaming, mas
+é O(n) em **trabalho** — e o programa avisa antes de começar.
+
+**Nada se perde em silêncio.** `errors="replace"` seria fácil e gravaria `?` no
+lugar de um `中` que não cabe em ISO-8859-1 — sem volta. A conversão **para**,
+diz qual caractere e em que linha, e o arquivo continua exatamente como estava
+(a escrita é num temporário ao lado, como toda gravação daqui).
+
+O detalhe que só aparece em arquivo grande: os blocos têm 4 MB e não respeitam
+fronteira de caractere, então um `ç` pode ter um byte no fim de um bloco e o
+outro no começo do próximo. Por isso os codecs são **incrementais** — decodificar
+bloco a bloco produziria lixo a cada 4 MB.
 
 ## Realce de sintaxe numa fatia
 

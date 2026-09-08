@@ -20,11 +20,13 @@ com caixa diferente pelo Explorer, pela forma curta 8.3 e por caminho relativo.
 from __future__ import annotations
 
 import pathlib
+from dataclasses import replace
 
 from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from tfedit import codificacao, linguagens, log_interno
+from tfedit import (codificacao, conversao, linguagens,
+                    log_interno)
 from tfedit.linguagens import registro as registro_de_linguagens
 from tfedit.gravacao import gravar
 from tfedit.interface.editor import EditorDeslizante
@@ -140,7 +142,7 @@ class Aba(QWidget):
     @property
     def modificado(self) -> bool:
         return (self.documento.alterado
-                or self.editor.document().isModified())
+                or self.editor.sujo)
 
     @property
     def titulo(self) -> str:
@@ -207,6 +209,70 @@ class Aba(QWidget):
         self.editor.recarregar(self.editor.linha_atual_no_documento())
         self.titulo_mudou.emit()
         log.info("gravado %s (%d bytes)", alvo, escritos)
+        return escritos
+
+    # ==================================================================
+    # Codificacao
+    # ==================================================================
+
+    def reinterpretar(self, codec: str, bom: bytes = b"") -> None:
+        """Le os MESMOS bytes com outra codificacao. Nada muda no disco.
+
+        E' o conserto de "abri e veio tudo com acento quebrado": o arquivo
+        estava certo, a leitura e' que errou.
+
+        Recusa com edicao pendente, e o motivo nao e' preciosismo: o que foi
+        digitado esta' guardado como BYTES na codificacao antiga. Reinterpretar
+        transformaria o texto que a propria pessoa acabou de escrever em
+        rabisco, sem desfazer possivel.
+        """
+        if self.documento.alterado:
+            raise ValueError(
+                "Este arquivo tem alterações não salvas. Salve ou desfaça "
+                "antes de reinterpretar a codificação: o que você digitou "
+                "está guardado na codificação atual e sairia ilegível.")
+
+        self.perfil = replace(self.perfil, codec=codec, bom=bom,
+                              como_decidiu="escolha do usuário")
+        self.janela.perfil = self.perfil
+        self.editor.recarregar(self.editor.linha_atual_no_documento())
+        self.titulo_mudou.emit()
+        log.info("%s reinterpretado como %s", self.nome, self.perfil.rotulo)
+
+    def converter_codificacao(self, alvo: conversao.Alvo,
+                              cancelar=None) -> int:
+        """Reescreve o arquivo INTEIRO na codificacao `alvo`.
+
+        Ao contrario de `salvar`, isto nao e' no-op quando nao ha' edicao: o
+        pedido e' justamente reescrever os bytes.
+        """
+        self.editor.sincronizar()
+        self.original.conferir_no_disco()
+
+        escritos = conversao.converter(
+            self.caminho, self.documento, self.perfil.codec, alvo,
+            rotulo_de=self.perfil.rotulo, cancelar=cancelar,
+            antes_de_trocar=self.original.fechar)
+
+        # Mesmo cuidado de `salvar`: o arquivo do disco e' outro, com OUTROS
+        # offsets -- em UTF-8 os acentos passaram a ocupar dois bytes. As pecas
+        # e o indice antigos apontam para posicoes que nao existem mais.
+        novo = Original(self.caminho)
+        novo.indexar()
+        self.original = novo
+        self.documento.confirmar_gravacao(novo)
+        self.janela.documento = self.documento
+
+        # Redetectar em vez de assumir o alvo: e' a prova de que o arquivo
+        # gravado E' o que se pediu. Se a deteccao discordar, o rotulo da barra
+        # mostra o que esta' no disco, e nao o que a gente quis fazer.
+        self.perfil = codificacao.detectar(
+            self.original.ler(0, codificacao.SONDAGEM))
+        self.janela.perfil = self.perfil
+        self.editor.recarregar(self.editor.linha_atual_no_documento())
+        self.titulo_mudou.emit()
+        log.info("%s convertido para %s (%d bytes, detectado como %s)",
+                 self.nome, alvo.rotulo, escritos, self.perfil.rotulo)
         return escritos
 
     # ==================================================================

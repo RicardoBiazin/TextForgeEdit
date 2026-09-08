@@ -12,12 +12,13 @@ import pathlib
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import (QAction, QActionGroup, QKeySequence,
                            QTextCursor)
-from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox,
-                               QProgressBar, QStatusBar, QTabWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow,
+                               QMessageBox, QProgressBar, QStatusBar,
+                               QTabWidget, QVBoxLayout, QWidget)
 
-from tfedit import (APP, AUTOR, VERSAO, busca, configuracao,
-                    linguagens, log_interno, sessao as sessao_mod,
+from tfedit import (APP, AUTOR, VERSAO, busca, codificacao,
+                    configuracao, conversao, linguagens,
+                    log_interno, sessao as sessao_mod,
                     tema as tema_mod)
 from tfedit.linguagens import registro as registro_de_linguagens
 from tfedit.gravacao import FalhaNaTroca, SemEspaco
@@ -120,6 +121,133 @@ class JanelaPrincipal(QMainWindow):
         self.credito.clicado.connect(self.sobre)
         self.barra.addPermanentWidget(self.credito)
         self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para cá")
+
+    # ==================================================================
+    # Codificação
+    # ==================================================================
+
+    def _montar_menu_codificacao(self) -> None:
+        """Dois grupos, com dois verbos, e a diferença escrita no menu.
+
+        Juntar "reinterpretar" e "converter" num comando só foi o defeito
+        relatado no editor irmão — a pessoa mandava converter, via o rótulo
+        mudar e o arquivo continuar igual, ou o contrário. São operações
+        diferentes: uma lê os mesmos bytes de outro jeito, a outra reescreve
+        o arquivo inteiro.
+        """
+        self.menu_codificacao.clear()
+        aba = self.aba_atual
+        if aba is None:
+            acao = self.menu_codificacao.addAction("(nenhum arquivo aberto)")
+            acao.setEnabled(False)
+            return
+
+        titulo = self.menu_codificacao.addAction(
+            f"Este arquivo está em {aba.perfil.rotulo}")
+        titulo.setEnabled(False)
+        self.menu_codificacao.addSeparator()
+
+        reler = self.menu_codificacao.addMenu("&Reinterpretar como")
+        reler.setToolTip("Lê os mesmos bytes de outro jeito. O arquivo no "
+                         "disco não muda.")
+        for alvo in conversao.ALVOS:
+            acao = reler.addAction(alvo.rotulo)
+            acao.setCheckable(True)
+            acao.setChecked((aba.perfil.codec, aba.perfil.bom) == alvo.chave)
+            acao.triggered.connect(
+                lambda _c=False, a=alvo: self._reinterpretar(a))
+
+        converter = self.menu_codificacao.addMenu("&Converter para")
+        converter.setToolTip("Reescreve o arquivo inteiro na codificação "
+                             "escolhida.")
+        for alvo in conversao.ALVOS:
+            acao = converter.addAction(alvo.rotulo + "…")
+            acao.setEnabled((aba.perfil.codec, aba.perfil.bom) != alvo.chave)
+            acao.triggered.connect(
+                lambda _c=False, a=alvo: self._converter(a))
+
+    def _reinterpretar(self, alvo) -> None:
+        aba = self.aba_atual
+        if aba is None:
+            return
+        try:
+            aba.reinterpretar(alvo.codec, alvo.bom)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Não é possível reinterpretar agora",
+                                str(exc))
+            return
+        self.rotulo_codec.setText(
+            f"{aba.perfil.rotulo}  {aba.perfil.rotulo_eol}")
+        self.barra.showMessage(
+            f"Lendo como {alvo.rotulo}. Nenhum byte do arquivo mudou — "
+            f"use Converter para gravar nesta codificação.", 8000)
+
+    def _converter(self, alvo) -> None:
+        aba = self.aba_atual
+        if aba is None:
+            return
+        if aba.indexando_agora:
+            self._avisar_indexando()
+            return
+
+        # O aviso não é cerimônia. A gravação comum copia os trechos intactos
+        # byte a byte; converter obriga a decodificar e recodificar TUDO, e
+        # num arquivo grande isso demora de verdade.
+        mb = aba.original.tamanho / (1024 * 1024)
+        aviso = (f"Converter <b>{aba.nome}</b> de {aba.perfil.rotulo} para "
+                 f"<b>{alvo.rotulo}</b>.<br><br>"
+                 f"Isto reescreve o arquivo inteiro ({mb:,.1f} MB). "
+                 f"Diferente de salvar, aqui <b>todos</b> os bytes mudam, e "
+                 f"não só os trechos editados.")
+        if mb > 50:
+            aviso += ("<br><br>Num arquivo deste tamanho a conversão leva "
+                      "algum tempo, e a janela fica parada até terminar.")
+        if QMessageBox.question(
+                self, "Converter a codificação", aviso,
+                QMessageBox.StandardButton.Ok
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel
+        ) != QMessageBox.StandardButton.Ok:
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            escritos = aba.converter_codificacao(alvo)
+        except conversao.NaoRepresentavel as exc:
+            QMessageBox.warning(
+                self, "A conversão perderia caracteres",
+                f"{exc}<br><br>O arquivo <b>não</b> foi alterado. "
+                f"Para guardar esse texto, escolha uma codificação que o "
+                f"aceite — o UTF-8 aceita qualquer caractere.")
+            return
+        except conversao.OrigemInvalida as exc:
+            QMessageBox.warning(
+                self, "A codificação de origem não confere",
+                f"{exc}<br><br>O arquivo <b>não</b> foi alterado. Use "
+                f"<b>Reinterpretar como</b> para dizer qual é a codificação "
+                f"real e tente de novo.")
+            return
+        except SemEspaco as exc:
+            QMessageBox.warning(self, "Espaço insuficiente", str(exc))
+            return
+        except ArquivoMudou as exc:
+            QMessageBox.warning(
+                self, "O arquivo mudou no disco",
+                f"{exc}.<br><br>O arquivo <b>não</b> foi convertido.")
+            return
+        except (FalhaNaTroca, OSError) as exc:
+            log.error("falha ao converter %s: %s", aba.nome, exc)
+            QMessageBox.warning(self, "Não foi possível converter", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        self.rotulo_codec.setText(
+            f"{aba.perfil.rotulo}  {aba.perfil.rotulo_eol}")
+        self._atualizar_titulos()
+        self.barra.showMessage(
+            f"Convertido para {aba.perfil.rotulo}: {escritos:,} bytes "
+            f"gravados em {aba.nome}".replace(",", "."), 8000)
 
     # ==================================================================
     # Linguagem
@@ -273,6 +401,9 @@ class JanelaPrincipal(QMainWindow):
              lambda: self.barra_busca._procurar(True), localizar)
         localizar.addSeparator()
         acao("&Ir para linha...", "Ctrl+G", self.ir_para_linha, localizar)
+
+        self.menu_codificacao = self.menuBar().addMenu("&Codificação")
+        self.menu_codificacao.aboutToShow.connect(self._montar_menu_codificacao)
 
         self.menu_linguagem = self.menuBar().addMenu("Lin&guagem")
         self.menu_linguagem.aboutToShow.connect(self._montar_menu_linguagem)

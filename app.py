@@ -31,6 +31,7 @@ OBRIGATORIOS = (
     "tfedit.tema", "tfedit.recursos", "tfedit.indentacao",
     "tfedit.linguagens", "tfedit.linguagens.registro",
     "tfedit.realce.pintor", "tfedit.realce.regras",
+    "tfedit.conversao",
 )
 
 

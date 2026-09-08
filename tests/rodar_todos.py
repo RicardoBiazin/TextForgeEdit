@@ -43,6 +43,8 @@ SUITES = [
      "sessao pelo diario, assinatura e instancia unica entre processos"),
     ("teste_idioma.py",
      "portugues do Brasil: acentos nos textos e nos dialogos do Qt"),
+    ("teste_conversao.py",
+     "reinterpretar e converter a codificacao, sem perda silenciosa"),
     ("teste_realce.py",
      "realce de sintaxe na fatia: 24 linguagens e a semente de contexto"),
     ("teste_janela_principal.py",

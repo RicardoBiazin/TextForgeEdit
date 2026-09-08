@@ -313,6 +313,52 @@ def testar_acentos() -> None:
 # ===========================================================================
 
 
+def testar_folga_menor_que_a_fatia() -> None:
+    secao("*** A margem nunca passa da janela ***")
+
+    from tfedit import janela as janela_mod
+
+    with pasta_temporaria() as pasta:
+        alvo = pasta / "muitas.txt"
+        alvo.write_bytes(b"".join(b"linha %05d\r\n" % i
+                                  for i in range(2000)))
+        original = Original(alvo)
+        original.indexar()
+        try:
+            viva = JanelaViva(Documento(original),
+                              codificacao.Perfil(codec="utf-8"), linhas=100)
+            viva.carregar(1000)
+
+            checa(viva.folga < viva.linhas,
+                  f"a folga ({viva.folga}) e' menor que a fatia "
+                  f"({viva.linhas})")
+            checa(viva.folga * 2 < viva.linhas,
+                  "e sobra fatia util entre as duas margens")
+
+            # Com `FOLGA` fixo em 500 numa fatia de 100, a fatia INTEIRA cabia
+            # dentro da margem: `precisa_deslizar` respondia sempre que sim, e
+            # cada movimento do cursor recarregava. Como recarregar repoe o
+            # cursor no comeco da linha, digitar "ação" saia "oãça" -- o
+            # sintoma nao parecia de rolagem, e a edicao se perdia.
+            checa(viva.folga <= janela_mod.FOLGA,
+                  "e nunca passa do teto geral")
+
+            meio = viva.recorte.primeira_linha + viva.linhas // 2
+            checa(not viva.precisa_deslizar(meio),
+                  f"*** no MEIO da fatia (linha {meio}) nao desliza ***")
+            perto = viva.recorte.primeira_linha + 1
+            checa(viva.precisa_deslizar(perto),
+                  f"mas encostado na borda (linha {perto}) desliza")
+
+            # E a fatia grande continua com a folga cheia.
+            grande = JanelaViva(Documento(original),
+                                codificacao.Perfil(codec="utf-8"), linhas=5000)
+            checa_igual(grande.folga, janela_mod.FOLGA,
+                        "numa fatia de 5000 a folga e' a do padrao")
+        finally:
+            original.fechar()
+
+
 def main() -> int:
     testar_codificacao()
     testar_carregar()
@@ -320,6 +366,7 @@ def main() -> int:
     testar_deslizar()
     testar_ida_e_volta_com_janela()
     testar_acentos()
+    testar_folga_menor_que_a_fatia()
     return resumir()
 
 

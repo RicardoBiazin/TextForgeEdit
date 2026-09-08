@@ -63,6 +63,27 @@ class EditorDeslizante(QPlainTextEdit):
         self.tema = tema if tema is not None else tema_mod.embutido("escuro")
         self.provedor = provedor
 
+        # A FATIA TEM ALGO PARA MANDAR DE VOLTA?
+        #
+        # Esta bandeira existe porque `document().isModified()` NAO serve mais
+        # como resposta. O `QSyntaxHighlighter` guarda o valor do sinalizador
+        # antes de reformatar e o RESTAURA depois, para que pintar cores nao
+        # marque o documento como sujo. Ele e' um segundo dono do sinalizador --
+        # e, com o realce ligado, `isModified()` passou a devolver False logo
+        # depois de digitar. O texto ficava na tela e nao chegava a tabela de
+        # pecas; salvar gravava o arquivo sem a edicao.
+        #
+        # Quem escreve aqui e' so' `_ao_mudar_texto`, e so' quando a mudanca
+        # veio do usuario -- deslizar troca a fatia inteira e nao e' edicao.
+        self._sujo = False
+
+        # Repintar tambem dispara `textChanged`: o `QSyntaxHighlighter` aplica
+        # os formatos por dentro de um bloco de edicao do documento. Sem esta
+        # bandeira, semear o realce depois de gravar marcava a aba como suja de
+        # novo -- o arquivo acabava de ir para o disco e o titulo ja' voltava
+        # com asterisco, e fechar pedia para salvar o que nao mudou.
+        self._repintando = False
+
         fonte = QFont(str(self.cfg.get("fonte", "Consolas")),
                       int(self.cfg.get("fonte_tamanho", 11)))
         fonte.setFixedPitch(True)
@@ -123,7 +144,11 @@ class EditorDeslizante(QPlainTextEdit):
             return
         anteriores = self.janela.linhas_antes_da_fatia()
         pintor.pilha_inicial = pintor.simular(anteriores) if anteriores else None
-        pintor.rehighlight()
+        self._repintando = True
+        try:
+            pintor.rehighlight()
+        finally:
+            self._repintando = False
 
     # ==================================================================
     # A fatia
@@ -140,6 +165,7 @@ class EditorDeslizante(QPlainTextEdit):
             # registrou como "a edicao anterior".
             self.document().clearUndoRedoStacks()
             self.document().setModified(False)
+            self._sujo = False
             alvo = self.janela.linha_na_fatia(linha_do_documento)
             if alvo >= 0:
                 cursor = self.textCursor()
@@ -153,14 +179,20 @@ class EditorDeslizante(QPlainTextEdit):
         self._ajustar_margem()
         self._semear_realce()
 
+    @property
+    def sujo(self) -> bool:
+        """Ha' texto na fatia que ainda nao foi para a tabela de pecas."""
+        return self._sujo
+
     def sincronizar(self) -> bool:
         """Manda para a tabela de pecas o que foi editado na fatia."""
         if self._deslizando:
             return False
-        if not self.document().isModified():
+        if not self._sujo:
             return False
         mudou = self.janela.aplicar(self.toPlainText())
         self.document().setModified(False)
+        self._sujo = False
         return mudou
 
     # ==================================================================
@@ -273,7 +305,8 @@ class EditorDeslizante(QPlainTextEdit):
             self.recarregar(linha)
 
     def _ao_mudar_texto(self) -> None:
-        if not self._deslizando:
+        if not self._deslizando and not self._repintando:
+            self._sujo = True
             self.sujou.emit()
 
     # ==================================================================

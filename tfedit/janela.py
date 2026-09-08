@@ -216,6 +216,21 @@ class JanelaViva:
     # Deslizar
     # ==================================================================
 
+    @property
+    def folga(self) -> int:
+        """Margem ate' a borda da fatia antes de deslizar.
+
+        NUNCA maior que um quarto da janela. Com `FOLGA` fixo em 500 e uma
+        janela de 100 linhas -- valor que `linhas_da_janela` aceita -- a fatia
+        inteira cabia dentro da margem, `precisa_deslizar` respondia SEMPRE que
+        sim, e cada movimento do cursor recarregava a fatia.
+
+        O sintoma nao parecia de rolagem: recarregar repoe o cursor no COMECO
+        da linha, entao digitar "ação" saia "oãça" no inicio da linha, e a
+        edicao se perdia. Uma margem maior que a janela nao e' margem.
+        """
+        return max(1, min(FOLGA, self.linhas // 4))
+
     def precisa_deslizar(self, linha: int) -> bool:
         """A linha pedida esta' perto demais da borda da fatia?"""
         if self.recorte is None:
@@ -225,6 +240,7 @@ class JanelaViva:
         no_inicio = self.recorte.primeira_linha
         no_fim = self.recorte.ultima_linha
         total = self.documento.total_de_linhas
+        FOLGA = self.folga                    # noqa: N806 - sombra proposital
         # Sem folga nas pontas do ARQUIVO: quando a fatia ja' encosta no comeco
         # ou no fim, nao ha' para onde deslizar, e insistir recarregaria a mesma
         # fatia a cada movimento do cursor.

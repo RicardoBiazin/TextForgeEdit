@@ -22,6 +22,7 @@ projeto que arraste Qt.
 from __future__ import annotations
 
 import contextlib
+import atexit
 import os
 import pathlib
 import shutil
@@ -37,6 +38,17 @@ if str(RAIZ) not in sys.path:
 
 falhas: list[str] = []
 _total = 0
+
+
+# O console do Windows costuma ser cp1252, e uma mensagem de teste com um
+# caractere de fora dessa tabela -- um ideograma numa suite de CODIFICACAO, por
+# exemplo -- derrubava o runner inteiro com UnicodeEncodeError, no meio da
+# suite, sem relatorio nenhum. O teste falharia; o runner nao pode.
+for _fluxo in (sys.stdout, sys.stderr):
+    try:
+        _fluxo.reconfigure(errors="replace")
+    except (AttributeError, OSError):
+        pass
 
 
 def checa(condicao: object, mensagem: str) -> bool:
@@ -89,6 +101,31 @@ def resumir() -> int:
 # -- ambiente ---------------------------------------------------------------
 
 
+def _isolar_appdata() -> None:
+    """Aponta %APPDATA% para uma pasta descartavel, para o processo inteiro.
+
+    NAO e' zelo excessivo: ja' aconteceu. Uma suite montou uma janela com
+    `{"linhas_da_janela": 100}`, a janela gravou as preferencias ao fechar, e
+    isso foi parar no config REAL do usuario -- que passou a abrir todo arquivo
+    com uma fatia de 100 linhas. Junto foram caminhos de pasta temporaria para
+    a lista de recentes.
+
+    O estrago atravessou processos: `teste_editor.py` comecou a falhar porque
+    LIA a preferencia que outra suite tinha escrito. Um teste que suja o
+    ambiente do usuario nao e' um teste ruim so' por ser invasivo; ele fica
+    NAO DETERMINISTICO, e a falha aparece em outro arquivo.
+
+    Fica aqui, e nao em cada teste, porque toda suite chama `preparar_qt()`
+    antes de qualquer coisa -- lembrar caso a caso e' o que falhou antes.
+    """
+    if os.environ.get("TFEDIT_APPDATA_ISOLADO"):
+        return
+    pasta = pathlib.Path(tempfile.mkdtemp(prefix="tfedit-appdata-suite-"))
+    os.environ["APPDATA"] = str(pasta)
+    os.environ["TFEDIT_APPDATA_ISOLADO"] = "1"
+    atexit.register(shutil.rmtree, pasta, True)
+
+
 def preparar_qt() -> bool:
     """Prepara uma QApplication invisivel. False se PySide6 nao esta' instalado.
 
@@ -97,6 +134,7 @@ def preparar_qt() -> bool:
     nao foi montado.
     """
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    _isolar_appdata()
     try:
         from PySide6.QtWidgets import QApplication
     except ImportError:
