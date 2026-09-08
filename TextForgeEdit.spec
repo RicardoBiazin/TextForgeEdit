@@ -27,6 +27,8 @@ hiddenimports = [
     "charset_normalizer",
     # Idem: `planilha/leitor.py` so' importa openpyxl quando abre uma planilha.
     "openpyxl",
+    # Idem: `formatadores/de_sql.py` so' importa sqlparse quando formata SQL.
+    "sqlparse",
 ]
 
 excludes = [

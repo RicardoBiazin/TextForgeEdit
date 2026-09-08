@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel,
                                QProgressBar, QStatusBar, QTabWidget,
                                QVBoxLayout, QWidget)
 
+from tfedit import janela as janela_viva
+from tfedit import seguranca
 from tfedit import (APP, AUTOR, VERSAO, busca, codificacao,
                     configuracao, conversao, linguagens,
                     log_interno, sessao as sessao_mod,
@@ -150,6 +152,207 @@ class JanelaPrincipal(QMainWindow):
         self.credito.clicado.connect(self.sobre)
         self.barra.addPermanentWidget(self.credito)
         self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para cá")
+
+    # ==================================================================
+    # Formatar
+    # ==================================================================
+
+    def _ajustar_menu_formatar(self) -> None:
+        """Desabilita com o MOTIVO na dica, em vez de falhar depois do clique.
+
+        O usuário escolheu isto: acima do teto o comando aparece desabilitado
+        dizendo por quê, e não tenta.
+        """
+        aba = self.aba_atual
+        motivo = self._por_que_nao_formata(aba)
+        for acao in self.menu_formatar.actions():
+            if acao.isSeparator():
+                continue
+            acao.setEnabled(motivo is None)
+            acao.setToolTip(motivo or "")
+        self.menu_formatar.setToolTipsVisible(True)
+
+    def _por_que_nao_formata(self, aba) -> str | None:
+        """None quando dá para formatar; senão, a explicação."""
+        if aba is None:
+            return "Nenhum arquivo aberto."
+        if aba.e_planilha:
+            return "Uma planilha não é código."
+        if aba.indexando_agora:
+            return "Aguarde a varredura do arquivo terminar."
+        if aba.provedor is None or aba.provedor.formatador() is None:
+            nome = aba.nome_da_linguagem if aba.provedor else "Texto"
+            return (f"Não há formatador para {nome}. Use o menu Linguagem "
+                    f"para escolher outra.")
+
+        teto = seguranca.LIMITE_DE_ENTRADA_MB * 1024 * 1024
+        if aba.documento.tamanho > teto:
+            # Formatar exige o documento INTEIRO como texto na memória: os
+            # formatadores recebem `str` e devolvem `str`, e não existe versão
+            # em streaming disso. O teto é o limite honesto dessa técnica.
+            return (f"O arquivo tem "
+                    f"{aba.documento.tamanho / (1024 * 1024):.0f} MB e o "
+                    f"limite para formatar é de "
+                    f"{seguranca.LIMITE_DE_ENTRADA_MB} MB — formatar exige o "
+                    f"texto inteiro na memória.")
+        return None
+
+    def _recusar_formatacao(self, aba) -> bool:
+        motivo = self._por_que_nao_formata(aba)
+        if motivo is None:
+            return False
+        self.barra.showMessage(motivo, 8000)
+        return True
+
+    def formatar_documento(self) -> None:
+        self._formatar(compactando=False)
+
+    def compactar_documento(self) -> None:
+        self._formatar(compactando=True)
+
+    def _formatar(self, *, compactando: bool) -> None:
+        """Formata o documento inteiro em UMA operação de desfazer.
+
+        O editor só tem a fatia, então o resultado não pode ser aplicado por
+        ele: vai direto à tabela de peças.
+
+        E vai APARADO. `_prefixo_comum`/`_sufixo_comum` são os mesmos da janela
+        viva, e dão de graça uma propriedade valiosa: reformatar um arquivo que
+        já está formatado é **no-op** — não mexe na tabela, não marca a aba
+        como suja e não mexe na data do arquivo ao salvar.
+        """
+        aba = self.aba_atual
+        if self._recusar_formatacao(aba):
+            return
+        aba.sincronizar()
+
+        formatador = aba.provedor.formatador()
+        antigos = aba.documento.ler(0, aba.documento.tamanho)
+        try:
+            texto = antigos.decode(aba.perfil.codec)
+        except UnicodeDecodeError as erro:
+            self.barra.showMessage(
+                f"O arquivo não é texto válido em {aba.perfil.rotulo} "
+                f"({erro}). Reinterprete a codificação antes de formatar.",
+                8000)
+            return
+
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            opcoes = {"usa_espacos": True,
+                      "largura": int(self.cfg.get("tabulacao", 4)),
+                      "comprimento_de_linha": 100}
+            saida = (formatador.compactar(texto, opcoes) if compactando
+                     else formatador.formatar(texto, opcoes))
+        except Exception as exc:              # noqa: BLE001 - motor de terceiro
+            log.error("formatador de %s falhou: %s", aba.nome_da_linguagem, exc)
+            QMessageBox.warning(self, "Não foi possível formatar", str(exc))
+            return
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        if not self._aplicar_saida(aba, saida, antigos):
+            return
+
+    def _aplicar_saida(self, aba, saida, antigos: bytes) -> bool:
+        from tfedit.formatadores.base import ErroDeSintaxe, Recusa
+
+        if isinstance(saida, ErroDeSintaxe):
+            self._mostrar_erro_de_sintaxe(aba, saida)
+            return False
+        if isinstance(saida, Recusa):
+            self.barra.showMessage(saida.descrever(), 8000)
+            return False
+
+        try:
+            novos = saida.texto.encode(aba.perfil.codec)
+        except UnicodeEncodeError as erro:
+            self.barra.showMessage(
+                f"O texto formatado tem um caractere que não existe em "
+                f"{aba.perfil.rotulo} ({erro.object[erro.start]!r}). "
+                f"O arquivo não foi alterado.", 8000)
+            return False
+
+        inicio = janela_viva._prefixo_comum(antigos, novos)
+        fim_antigo, fim_novo = janela_viva._sufixo_comum(antigos, novos, inicio)
+        if inicio == fim_antigo == len(antigos):
+            self.barra.showMessage("O arquivo já estava formatado.", 5000)
+            return False
+
+        with aba.documento.agrupar():
+            aba.documento.substituir(inicio, fim_antigo - inicio,
+                                     novos[inicio:fim_novo])
+        aba.editor.recarregar(aba.editor.linha_atual_no_documento())
+        aba.ao_indexar()
+        self._atualizar_titulos()
+        mudou = fim_antigo - inicio
+        self.barra.showMessage(
+            f"Formatado: {mudou:,} bytes trocados, num único passo de "
+            f"desfazer.".replace(",", "."), 6000)
+        return True
+
+    def formatar_selecao(self) -> None:
+        """Formata só o trecho selecionado.
+
+        É o caso que encaixa na arquitetura sem ressalva: a seleção está na
+        fatia, não passa por teto nenhum e sai pelo caminho normal de edição do
+        editor — um `beginEditBlock`, um Ctrl+Z.
+        """
+        aba = self.aba_atual
+        if self._recusar_formatacao(aba):
+            return
+        cursor = aba.editor.textCursor()
+        if not cursor.hasSelection():
+            self.barra.showMessage(
+                "Selecione o trecho a formatar, ou use Formatar Documento.",
+                6000)
+            return
+
+        trecho = cursor.selectedText().replace("\u2029", "\n")
+        formatador = aba.provedor.formatador()
+        saida = formatador.formatar(
+            trecho, {"usa_espacos": True,
+                     "largura": int(self.cfg.get("tabulacao", 4)),
+                     "comprimento_de_linha": 100})
+        from tfedit.formatadores.base import Resultado
+
+        if not isinstance(saida, Resultado):
+            self.barra.showMessage(saida.descrever(), 8000)
+            return
+        cursor.beginEditBlock()
+        cursor.insertText(saida.texto)
+        cursor.endEditBlock()
+        self.barra.showMessage("Seleção formatada.", 5000)
+
+    def validar_documento(self) -> None:
+        aba = self.aba_atual
+        if self._recusar_formatacao(aba):
+            return
+        aba.sincronizar()
+        texto = aba.documento.ler(0, aba.documento.tamanho).decode(
+            aba.perfil.codec, errors="replace")
+        erro = aba.provedor.formatador().validar(texto)
+        if erro is None:
+            self.barra.showMessage(
+                f"{aba.nome_da_linguagem}: sintaxe válida.", 6000)
+            return
+        self._mostrar_erro_de_sintaxe(aba, erro)
+
+    def _mostrar_erro_de_sintaxe(self, aba, erro) -> None:
+        """Sem painel de problemas: uma caixa que leva ao erro.
+
+        Um painel próprio é outro projeto; o que não pode é o erro sumir num
+        rodapé que a pessoa não estava olhando.
+        """
+        caixa = QMessageBox(self)
+        caixa.setIcon(QMessageBox.Icon.Warning)
+        caixa.setWindowTitle("Erro de sintaxe")
+        caixa.setText(erro.descrever())
+        ir = caixa.addButton("Ir para o erro", QMessageBox.ButtonRole.AcceptRole)
+        caixa.addButton("Fechar", QMessageBox.ButtonRole.RejectRole)
+        caixa.exec()
+        if caixa.clickedButton() is ir and getattr(erro, "linha", 0):
+            aba.ir_para_linha(max(0, erro.linha - 1))
 
     # ==================================================================
     # Visualização
@@ -586,6 +789,17 @@ class JanelaPrincipal(QMainWindow):
              lambda: self.barra_busca._procurar(True), localizar)
         localizar.addSeparator()
         acao("&Ir para linha...", "Ctrl+G", self.ir_para_linha, localizar)
+
+        formatar = self.menuBar().addMenu("&Formatar")
+        acao("&Documento", "Shift+Alt+F", self.formatar_documento, formatar)
+        acao("Formatar &seleção", "Ctrl+K, Ctrl+F", self.formatar_selecao,
+             formatar)
+        formatar.addSeparator()
+        acao("&Compactar documento", "", self.compactar_documento, formatar)
+        acao("&Validar sintaxe", "Ctrl+Shift+V", self.validar_documento,
+             formatar)
+        formatar.aboutToShow.connect(self._ajustar_menu_formatar)
+        self.menu_formatar = formatar
 
         self.menu_view = self.menuBar().addMenu("&Visualizar")
         self.menu_view.aboutToShow.connect(self._montar_menu_view)

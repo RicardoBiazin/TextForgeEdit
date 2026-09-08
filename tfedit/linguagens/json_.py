@@ -34,6 +34,11 @@ class ProvedorJson(ProvedorDeLinguagem):
     aumenta_indentacao = re.compile(r"[{\[]\s*$")
     diminui_indentacao = re.compile(r"^\s*[}\]]")
 
+    def formatador(self):
+        from tfedit.formatadores import de_json
+
+        return de_json.FORMATADOR
+
     def __init__(self) -> None:
         self._cache: RegrasDeRealce | None = None
 
@@ -159,6 +164,7 @@ def _resumir(valor) -> str:
     if isinstance(valor, bool):
         return "true" if valor else "false"
     return str(valor)[:40]
+
 
 
 PROVEDORES = (ProvedorJson(),)

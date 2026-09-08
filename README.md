@@ -70,6 +70,7 @@ Já dá para abrir, digitar e salvar:
 | `tfedit/interface/visualizadores/` — views: hexadecimal e grade CSV | pronto |
 | `tfedit/csv_dialeto.py` — detecção de separador, aspas e cabeçalho | pronto |
 | `tfedit/planilha/` — .xlsx: leitura e gravação por patch no ZIP | pronto |
+| `tfedit/formatadores/` — JSON, XML, CSS, HTML e SQL | pronto |
 
 **Medido**, arquivo de 18 MB com 400 mil linhas: digitar duas frases (uma no
 começo, outra na linha 300.000, com deslize entre elas) deixa **42 bytes** na
@@ -161,6 +162,31 @@ para a memória, o tamanho é conferido por `stat` **antes** de ler um byte. Aci
 de 100 MB o arquivo abre como arquivo comum, onde as garantias de memória do
 editor voltam a valer. Um `.zip` renomeado para `.xlsx` também é recusado — a
 detecção olha o conteúdo.
+
+## Formatar código
+
+Menu **Formatar**: documento (`Shift+Alt+F`), seleção, compactar e validar
+sintaxe. Cinco motores — JSON, XML, CSS, HTML e SQL.
+
+**O Python ficou de fora de propósito.** O motor dele é o `black`, que arrasta
+`click`, `pathspec` e `platformdirs`, e um arquivo-fonte Python não é o motivo
+deste editor existir. Não é esquecimento; está registrado no código.
+
+**Como o resultado chega ao arquivo.** Os formatadores recebem `str` e devolvem
+`str` — não existe versão em streaming disso, e nem daria: indentar exige
+conhecer a estrutura inteira. E o editor só tem a fatia. Então o resultado não
+passa pelo editor: vai direto à tabela de peças, **aparado** por
+`_prefixo_comum`/`_sufixo_comum` — os mesmos da janela viva.
+
+O aparo dá de graça uma propriedade valiosa: **reformatar um arquivo já
+formatado é no-op**. Não mexe na tabela, não suja a aba, não muda a data do
+arquivo ao salvar. E o documento inteiro formatado é **um único** passo de
+desfazer.
+
+**Acima de 64 MB o comando vem desabilitado com o motivo na dica** — formatar é
+a única operação daqui que precisa do arquivo inteiro na memória, e esse é o
+limite honesto da técnica. Formatar **seleção** não tem teto: a seleção está na
+fatia.
 
 ## O rodapé é interativo
 

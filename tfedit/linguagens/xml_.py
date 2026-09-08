@@ -36,6 +36,11 @@ class ProvedorXml(ProvedorDeLinguagem):
     aumenta_indentacao = re.compile(r"<(?!/)[^>]*[^/]>\s*$")
     diminui_indentacao = re.compile(r"^\s*</")
 
+    def formatador(self):
+        from tfedit.formatadores import de_xml
+
+        return de_xml.FORMATADOR
+
     def __init__(self) -> None:
         self._cache: RegrasDeRealce | None = None
 
@@ -154,6 +159,7 @@ def _atributos(resto: str) -> str:
     """Resumo dos atributos, para a coluna de detalhe do painel."""
     nomes = re.findall(rf"({NOME_DE_TAG})\s*=", resto)
     return " ".join(nomes[:4]) + (" ..." if len(nomes) > 4 else "")
+
 
 
 PROVEDORES = (ProvedorXml(),)

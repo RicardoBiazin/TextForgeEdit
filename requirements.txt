@@ -15,6 +15,12 @@ PySide6-Essentials>=6.9,<7
 # (~18 KB) e nada mais -- pandas e numpy continuam nos excludes do .spec.
 openpyxl==3.1.5
 
+# Formatador de SQL. Puro Python, ~200 KB. Os outros quatro motores (JSON, XML,
+# CSS, HTML) sao stdlib ou implementacao propria. O formatador de PYTHON ficou
+# de fora de proposito: o motor dele e' o black, que arrasta click, pathspec e
+# platformdirs, e um arquivo-fonte Python nao e' o motivo deste editor existir.
+sqlparse>=0.5,<1
+
 charset-normalizer>=3.4,<4
 
 # Empacotamento. So' de desenvolvimento; nao vai dentro do .exe.

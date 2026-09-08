@@ -154,4 +154,10 @@ class ProvedorSql(ProvedorDeLinguagem):
             pontos += 10
         return min(pontos, 100)
 
+    def formatador(self):
+        from tfedit.formatadores import de_sql
+
+        return de_sql.FORMATADOR
+
+
 PROVEDORES = (ProvedorSql(),)

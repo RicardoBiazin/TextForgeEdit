@@ -37,7 +37,11 @@ OBRIGATORIOS = (
     "tfedit.interface.visualizadores.grade_csv", "tfedit.csv_dialeto",
     "tfedit.interface.visualizadores.planilha",
     "tfedit.planilha", "tfedit.planilha.leitor", "tfedit.planilha.gravador",
-    "openpyxl",
+    "openpyxl", "sqlparse",
+    "tfedit.seguranca", "tfedit.formatadores.base",
+    "tfedit.formatadores.de_json", "tfedit.formatadores.de_xml",
+    "tfedit.formatadores.de_css", "tfedit.formatadores.de_html",
+    "tfedit.formatadores.de_sql",
 )
 
 
