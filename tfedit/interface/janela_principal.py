@@ -15,8 +15,10 @@ from PySide6.QtWidgets import (QFileDialog, QLabel, QMainWindow, QMessageBox,
                                QProgressBar, QStatusBar, QTabWidget,
                                QVBoxLayout, QWidget)
 
-from tfedit import APP, AUTOR, VERSAO, busca, log_interno
+from tfedit import (APP, AUTOR, VERSAO, busca, configuracao,
+                    log_interno)
 from tfedit.gravacao import FalhaNaTroca, SemEspaco
+from tfedit.original import ArquivoMudou
 from tfedit.interface.aba import Aba
 from tfedit.interface.barra_busca import BarraDeBusca
 
@@ -50,10 +52,14 @@ class _Credito(QLabel):
 
 
 class JanelaPrincipal(QMainWindow):
-    def __init__(self) -> None:
+    def __init__(self, cfg: dict | None = None) -> None:
         super().__init__()
+        self.cfg = cfg if cfg is not None else configuracao.carregar()
         self.setWindowTitle(f"TextForgeEdit {VERSAO}")
-        self.resize(1150, 780)
+        self.resize(int(self.cfg.get("janela_largura", 1150)),
+                    int(self.cfg.get("janela_altura", 780)))
+        if self.cfg.get("janela_maximizada"):
+            self.showMaximized()
         self.setAcceptDrops(True)          # arrastar-e-soltar (ver dropEvent)
 
         self.abas = QTabWidget(self)
@@ -186,7 +192,7 @@ class JanelaPrincipal(QMainWindow):
                 return True
 
         try:
-            aba = Aba(caminho, self)
+            aba = Aba(caminho, self.cfg, self)
         except OSError as exc:
             log.warning("nao foi possivel abrir %s: %s", caminho, exc)
             QMessageBox.warning(self, "Não foi possível abrir", str(exc))
@@ -197,6 +203,7 @@ class JanelaPrincipal(QMainWindow):
         aba.indexando.connect(self._ao_indexar)
         aba.indexou.connect(self._ao_terminar_indice)
 
+        configuracao.registrar_recente(self.cfg, caminho)
         indice = self.abas.addTab(aba, aba.titulo)
         self.abas.setTabToolTip(indice, str(aba.caminho))
         self.abas.setCurrentIndex(indice)
@@ -332,6 +339,16 @@ class JanelaPrincipal(QMainWindow):
         except SemEspaco as exc:
             log.warning("sem espaco para gravar %s: %s", aba.nome, exc)
             QMessageBox.warning(self, "Espaço insuficiente", str(exc))
+            return False
+        except ArquivoMudou as exc:
+            log.warning("alteração externa em %s: %s", aba.nome, exc)
+            QMessageBox.warning(
+                self, "O arquivo mudou no disco",
+                f"{exc}.<br><br>Salvar agora apagaria essa alteração, e o "
+                f"resultado poderia misturar os dois textos. Use "
+                f"<b>Salvar como</b> para gravar uma cópia com o que você "
+                f"editou, ou feche e abra o arquivo de novo para partir da "
+                f"versão que está no disco.")
             return False
         except (FalhaNaTroca, OSError) as exc:
             log.error("falha ao gravar %s: %s", aba.nome, exc)
@@ -574,5 +591,10 @@ class JanelaPrincipal(QMainWindow):
                     return
         for aba in self.todas_as_abas():
             aba.encerrar()
+        self.cfg["janela_maximizada"] = self.isMaximized()
+        if not self.isMaximized():
+            self.cfg["janela_largura"] = self.width()
+            self.cfg["janela_altura"] = self.height()
+        configuracao.gravar(self.cfg)
         log.info("encerrando")
         evento.accept()

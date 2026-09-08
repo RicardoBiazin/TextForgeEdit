@@ -52,17 +52,31 @@ class EditorDeslizante(QPlainTextEdit):
     #: status precisam ser refeitos, e o texto na tela ja' e' outro.
     conteudo_voltou = Signal()
 
-    def __init__(self, janela: JanelaViva, parent: QWidget | None = None) -> None:
+    def __init__(self, janela: JanelaViva, parent: QWidget | None = None,
+                 *, cfg: dict | None = None) -> None:
         super().__init__(parent)
         self.janela = janela
+        self.cfg = cfg or {}
         self._deslizando = False
 
-        fonte = QFont("Consolas", 11)
+        fonte = QFont(str(self.cfg.get("fonte", "Consolas")),
+                      int(self.cfg.get("fonte_tamanho", 11)))
         fonte.setFixedPitch(True)
         fonte.setStyleHint(QFont.StyleHint.Monospace)
+        # A alternativa entra quando a fonte pedida nao existe na maquina: sem
+        # ela o Qt escolhe uma proporcional, e num editor de texto o
+        # alinhamento de colunas some.
+        alternativa = str(self.cfg.get("fonte_alternativa", "Courier New"))
+        if alternativa:
+            fonte.setFamilies([fonte.family(), alternativa])
         self.setFont(fonte)
-        self.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
-        self.setTabStopDistance(QFontMetrics(fonte).horizontalAdvance(" ") * 4)
+        largura = int(self.cfg.get("tabulacao", 4))
+        self.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth
+            if self.cfg.get("quebrar_linha") else
+            QPlainTextEdit.LineWrapMode.NoWrap)
+        self.setTabStopDistance(
+            QFontMetrics(fonte).horizontalAdvance(" ") * largura)
 
         self.margem = Margem(self)
         self.blockCountChanged.connect(lambda _n: self._ajustar_margem())

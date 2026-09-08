@@ -23,7 +23,7 @@ OBRIGATORIOS = (
     "tfedit.interface.editor", "tfedit.interface.janela_principal",
     "tfedit.interface.indexador", "tfedit.interface.aba",
     "tfedit.interface.barra_busca", "tfedit.busca", "tfedit.log_interno",
-    "tfedit.idioma",
+    "tfedit.idioma", "tfedit.cli", "tfedit.configuracao",
 )
 
 
@@ -134,7 +134,7 @@ def main() -> int:
 
     from PySide6.QtWidgets import QApplication
 
-    from tfedit import APP, VERSAO, idioma, log_interno
+    from tfedit import APP, VERSAO, cli, configuracao, idioma, log_interno
     from tfedit.interface.janela_principal import JanelaPrincipal
 
     # O log e a captura de erro entram ANTES de qualquer widget: uma excecao na
@@ -150,16 +150,25 @@ def main() -> int:
     # nao sao retraduzidos sozinhos.
     idioma.instalar(aplicacao)
 
-    janela = JanelaPrincipal()
+    pedido = cli.analisar(sys.argv[1:])
+    if pedido.ajuda:
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.information(None, APP, cli.AJUDA.replace(chr(10), "<br>"))
+        return 0
+
+    janela = JanelaPrincipal(configuracao.carregar())
     janela.show()
-    # O arquivo da linha de comando e' aberto DEPOIS de a janela aparecer: a
-    # janela vazia surge na hora, e o arquivo entra em seguida com a barra de
+    # Os arquivos da linha de comando entram DEPOIS de a janela aparecer: a
+    # janela vazia surge na hora, e cada arquivo entra em seguida com a barra de
     # progresso da indexacao. Abrir antes deixaria o usuario olhando para a area
     # de trabalho sem sinal de vida.
-    for argumento in sys.argv[1:]:
-        if not argumento.startswith("-"):
-            janela.abrir_arquivo(argumento)
-            break
+    for caminho in pedido.arquivos:
+        janela.abrir_arquivo(caminho)
+    if pedido.linha and janela.aba_atual is not None:
+        janela.aba_atual.editor.ir_para_linha(pedido.linha - 1)
+    for bruto, motivo in pedido.recusados:
+        log_interno.obter(__name__).warning("recusado %r: %s", bruto, motivo)
+        janela.barra.showMessage(f"Ignorado: {bruto} — {motivo}", 8000)
     return aplicacao.exec()
 
 

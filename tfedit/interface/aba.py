@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from tfedit import codificacao, log_interno
@@ -29,7 +29,7 @@ from tfedit.gravacao import gravar
 from tfedit.interface.editor import EditorDeslizante
 from tfedit.interface.indexador import PARTIDA, Indexador
 from tfedit.janela import JanelaViva
-from tfedit.original import Original
+from tfedit.original import ArquivoMudou, Original
 from tfedit.pecas import Documento
 
 log = log_interno.obter(__name__)
@@ -47,10 +47,14 @@ class Aba(QWidget):
     #: total de linhas, quando a varredura termina
     indexou = Signal(int)
 
-    def __init__(self, caminho, parent: QWidget | None = None) -> None:
+    def __init__(self, caminho, cfg: dict | None = None,
+                 parent: QWidget | None = None) -> None:
         super().__init__(parent)
+        self.cfg = cfg or {}
         self.caminho = pathlib.Path(caminho)
         self.original = Original(self.caminho)
+        self.original.ocioso_apos = float(
+            self.cfg.get("soltar_arquivo_apos_s", 20))
         self.perfil = codificacao.detectar(
             self.original.ler(0, codificacao.SONDAGEM))
         # Um primeiro pedaco SINCRONO, so' o bastante para a fatia inicial
@@ -59,8 +63,10 @@ class Aba(QWidget):
         self.original.indexar(PARTIDA)
 
         self.documento = Documento(self.original)
-        self.janela = JanelaViva(self.documento, self.perfil)
-        self.editor = EditorDeslizante(self.janela, self)
+        self.janela = JanelaViva(
+            self.documento, self.perfil,
+            linhas=int(self.cfg.get("linhas_da_janela", 5000)))
+        self.editor = EditorDeslizante(self.janela, self, cfg=self.cfg)
         self.editor.posicao_mudou.connect(self.posicao_mudou)
         self.editor.sujou.connect(self.titulo_mudou)
         self.editor.conteudo_voltou.connect(self.titulo_mudou)
@@ -82,9 +88,29 @@ class Aba(QWidget):
             self.indexador.falhou.connect(self._ao_falhar_indice)
             self.indexador.start()
 
+        # Enquanto o mmap existe, NENHUM outro programa consegue regravar o
+        # arquivo no Windows -- nem um rotacionador de log, nem um `git
+        # checkout`. O temporizador devolve o arquivo ao sistema quando ninguem
+        # esta' lendo; o proximo acesso remapeia sozinho, conferindo a
+        # assinatura. Ver o cabecalho de `original.py`.
+        self._relogio = QTimer(self)
+        self._relogio.setInterval(5_000)
+        self._relogio.timeout.connect(self._soltar_se_ocioso)
+        if self.original.ocioso_apos > 0:
+            self._relogio.start()
+
         log.info("aberto %s (%d bytes, %s, %s)", self.caminho,
                  self.original.tamanho, self.perfil.rotulo,
                  self.perfil.rotulo_eol)
+
+    def _soltar_se_ocioso(self) -> None:
+        # Enquanto a varredura corre, o worker esta' lendo do mmap: fecha-lo
+        # levantaria na thread de disco.
+        if self.indexando_agora:
+            return
+        if self.original.soltar_se_ocioso():
+            log.info("%s: arquivo solto por ociosidade (livre para outros "
+                     "programas)", self.nome)
 
     # ==================================================================
     # Identidade
@@ -156,6 +182,13 @@ class Aba(QWidget):
             log.info("nada a gravar em %s", alvo)
             return 0
 
+        # Depois de uma soltada por ociosidade o arquivo ficou livre para
+        # outros programas -- e' exatamente ai' que conferir importa. Com o
+        # mapeamento vivo a resposta e' sempre "nao mudou", e conferir custa
+        # dois MB de leitura, entao nao ha' motivo para pular.
+        if mesmo_arquivo:
+            self.original.conferir_no_disco()
+
         escritos = gravar(alvo, self.documento,
                           antes_de_trocar=self.original.fechar)
 
@@ -183,6 +216,8 @@ class Aba(QWidget):
         A ordem importa: fechar o mmap com o worker lendo dele levanta na thread
         de disco. `parar()` espera a thread sair.
         """
+        if getattr(self, "_relogio", None) is not None:
+            self._relogio.stop()
         if self.indexador is not None:
             self.indexador.parar()
             self.indexador = None

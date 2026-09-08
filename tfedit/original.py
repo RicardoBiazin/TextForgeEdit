@@ -20,13 +20,30 @@ um a cada `PASSO`, sao ~13 mil entradas (~100 KB), e achar a linha n custa um
 salto mais uma varredura de no maximo `PASSO` linhas -- imperceptivel. E a
 varredura e' incremental para a abertura ser instantanea: quem chama avanca um
 pedaco por vez e a interface ja' mostra o comeco do arquivo.
+
+**O MAPEAMENTO E' SOLTO QUANDO OCIOSO, e isso e' um par com a ASSINATURA.**
+Medido nesta maquina: enquanto o mmap existe, NENHUM outro programa consegue
+regravar o arquivo no Windows -- nem truncar (`open("wb")` da' "Invalid
+argument") nem substituir por renomeacao (`os.replace` da' "Acesso negado").
+Isso protege o documento, e ao mesmo tempo IMPEDE um rotacionador de log ou um
+`git checkout` de tocar num arquivo que esta' so' aberto para leitura.
+
+Soltar o mapeamento devolve o arquivo ao resto do sistema -- e reintroduz o
+risco que a trava evitava: se ele mudar enquanto estamos desmapeados, os offsets
+das pecas ORIGINAIS passam a apontar para outro conteudo, e gravar produziria uma
+mistura. Por isso a assinatura (tamanho, data e um hash das pontas) e' tirada na
+abertura e CONFERIDA em toda remapeamento e antes de gravar. As duas coisas nao
+se separam: soltar sem conferir seria trocar uma limitacao por corrupcao.
 """
 
 from __future__ import annotations
 
+import hashlib
 import mmap
 import os
 import pathlib
+import time
+from dataclasses import dataclass
 from typing import Callable
 
 #: Uma entrada de indice a cada N linhas. Ver a segunda decisao no cabecalho.
@@ -37,6 +54,59 @@ PASSO = 1024
 BLOCO = 4 * 1024 * 1024
 
 QUEBRA = 0x0A          # \n
+
+#: Quanto se le' de CADA PONTA para a assinatura. 1 MB de cada lado custa
+#: milissegundos num SSD e pega toda reescrita real: um log ganha linhas no fim,
+#: um export e' regerado do zero e o cabecalho muda.
+AMOSTRA = 1024 * 1024
+
+#: Segundos sem leitura ate' soltar o mapeamento. Ver o cabecalho.
+OCIOSO_PADRAO = 20.0
+
+
+class ArquivoMudou(OSError):
+    """O arquivo no disco deixou de ser o que foi aberto."""
+
+
+@dataclass(frozen=True)
+class Assinatura:
+    """Como o arquivo estava num instante.
+
+    O hash e' das PONTAS, e nao do arquivo inteiro: ler 1 GB para conferir se
+    ele mudou custaria mais que a propria gravacao. Nao e' garantia
+    criptografica -- e nao precisa ser. O que se quer e' nao sobrescrever
+    alteracao alheia em silencio, e uma mudanca que preserve tamanho, data E as
+    duas pontas e' um caso que nenhuma heuristica barata pega.
+    """
+
+    tamanho: int = -1
+    mtime_ns: int = 0
+    pontas: str = ""
+
+    @classmethod
+    def de_caminho(cls, caminho: pathlib.Path) -> "Assinatura":
+        try:
+            info = caminho.stat()
+        except OSError:
+            return cls()
+        resumo = hashlib.sha256()
+        resumo.update(str(info.st_size).encode())
+        try:
+            with open(caminho, "rb") as f:
+                resumo.update(f.read(AMOSTRA))
+                if info.st_size > AMOSTRA * 2:
+                    f.seek(info.st_size - AMOSTRA)
+                    resumo.update(f.read(AMOSTRA))
+        except OSError:
+            return cls(tamanho=info.st_size, mtime_ns=info.st_mtime_ns)
+        return cls(info.st_size, info.st_mtime_ns, resumo.hexdigest())
+
+    def combina_com(self, outra: "Assinatura") -> bool:
+        if self.tamanho != outra.tamanho:
+            return False
+        if self.pontas and outra.pontas:
+            return self.pontas == outra.pontas
+        return self.mtime_ns == outra.mtime_ns
 
 
 class Original:
@@ -66,6 +136,11 @@ class Original:
         self._varrido = 0        # ate' que offset o indice esta' construido
         self._fechado = False
 
+        self.assinatura = Assinatura.de_caminho(self.caminho)
+        self.ocioso_apos = OCIOSO_PADRAO
+        self._ultimo_uso = time.monotonic()
+        self._solto = False       # desmapeado por ociosidade, mas ainda vivo
+
     # ==================================================================
     # Ciclo de vida
     # ==================================================================
@@ -82,7 +157,8 @@ class Original:
         if self._mapa is not None:
             self._mapa.close()
             self._mapa = None
-        self._arquivo.close()
+        if not self._solto:
+            self._arquivo.close()
 
     def __enter__(self) -> "Original":
         return self
@@ -94,8 +170,77 @@ class Original:
     # Leitura crua
     # ==================================================================
 
+    # -- soltar e retomar o mapeamento --------------------------------------
+
+    @property
+    def solto(self) -> bool:
+        """O arquivo esta' desmapeado (e livre para outros programas)?"""
+        return self._solto
+
+    def soltar_se_ocioso(self, agora: float | None = None) -> bool:
+        """Desmapeia se ninguem leu nos ultimos `ocioso_apos` segundos.
+
+        Devolve True se soltou agora. Chamado por um temporizador da interface;
+        o proximo acesso remapeia sozinho.
+        """
+        if (self._fechado or self._solto or self._mapa is None
+                or self.ocioso_apos <= 0):
+            return False
+        agora = time.monotonic() if agora is None else agora
+        if agora - self._ultimo_uso < self.ocioso_apos:
+            return False
+        self._mapa.close()
+        self._mapa = None
+        self._arquivo.close()
+        self._solto = True
+        return True
+
+    def retomar(self) -> None:
+        """Remapeia, conferindo que o arquivo continua o mesmo.
+
+        Levanta `ArquivoMudou` quando nao continua. Remapear em silencio seria
+        pior que falhar: os offsets das pecas passariam a apontar para outro
+        conteudo, e a proxima gravacao misturaria os dois arquivos.
+        """
+        if self._fechado or not self._solto:
+            return
+        agora = Assinatura.de_caminho(self.caminho)
+        if not self.assinatura.combina_com(agora):
+            raise ArquivoMudou(
+                f"{self.caminho.name} foi alterado por outro programa "
+                f"enquanto estava aberto")
+        self._arquivo = open(self.caminho, "rb")
+        self.tamanho = os.fstat(self._arquivo.fileno()).st_size
+        self._mapa = (mmap.mmap(self._arquivo.fileno(), 0,
+                                access=mmap.ACCESS_READ)
+                      if self.tamanho else None)
+        self._solto = False
+
+    def conferir_no_disco(self) -> None:
+        """Levanta `ArquivoMudou` se o arquivo nao for mais o que abrimos.
+
+        Chamada ANTES de gravar. Com o mapeamento vivo a resposta e' sempre
+        "nao mudou" -- o Windows nao deixa outro programa regravar -- mas depois
+        de uma soltada por ociosidade a janela existe, e e' justamente ai' que
+        conferir importa.
+        """
+        agora = Assinatura.de_caminho(self.caminho)
+        if not self.assinatura.combina_com(agora):
+            raise ArquivoMudou(
+                f"{self.caminho.name} foi alterado por outro programa "
+                f"enquanto estava aberto")
+
+    def _usar(self) -> None:
+        """Marca uso e remapeia se preciso. Todo acesso passa por aqui."""
+        self._ultimo_uso = time.monotonic()
+        if self._solto:
+            self.retomar()
+
+    # -- leitura crua -------------------------------------------------------
+
     def ler(self, inicio: int, fim: int) -> bytes:
-        """Bytes de [inicio, fim). Recortado nos limites; nunca levanta."""
+        """Bytes de [inicio, fim). Recortado nos limites."""
+        self._usar()
         if self._mapa is None:
             return b""
         inicio = max(0, min(inicio, self.tamanho))
@@ -104,6 +249,7 @@ class Original:
 
     def achar(self, alvo: bytes, inicio: int, fim: int) -> int:
         """`mmap.find`, recortado. -1 quando nao ha'."""
+        self._usar()
         if self._mapa is None:
             return -1
         return self._mapa.find(alvo, max(0, inicio), min(fim, self.tamanho))
@@ -133,6 +279,7 @@ class Original:
     def indexar(self, orcamento: int | None = None,
                 cancelar: Callable[[], bool] | None = None) -> bool:
         """Avanca o indice. True quando o arquivo inteiro foi varrido."""
+        self._usar()
         if self._mapa is None or self.indexacao_completa:
             self._varrido = self.tamanho
             return True
@@ -164,6 +311,7 @@ class Original:
 
     def offset_da_linha(self, n: int) -> int:
         """Offset onde a linha `n` (base zero) comeca. `tamanho` se ela nao existe."""
+        self._usar()
         if self._mapa is None or n <= 0:
             return 0
         marcador = min(n // PASSO, len(self._marcadores) - 1)
@@ -185,6 +333,7 @@ class Original:
         duas chamadas destas, e cada uma custa um salto no indice mais no maximo
         `PASSO` linhas de varredura.
         """
+        self._usar()
         if self._mapa is None or offset <= 0:
             return 0
         offset = min(offset, self.tamanho)

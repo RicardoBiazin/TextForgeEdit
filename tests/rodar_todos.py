@@ -28,6 +28,8 @@ LIMITE_PROPRIO_S: dict[str, int] = {
 }
 
 SUITES = [
+    ("teste_base.py",
+     "configuracao, linha de comando, soltura do arquivo e assinatura"),
     ("teste_pecas.py",
      "indice do original, tabela de pecas, gravacao por streaming"),
     ("teste_janela.py",
