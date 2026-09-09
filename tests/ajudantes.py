@@ -28,6 +28,7 @@ import pathlib
 import shutil
 import sys
 import tempfile
+import uuid
 from typing import Iterator
 
 # Deixa `import textforge` funcionar rodando `python tests/teste_x.py` de
@@ -126,6 +127,24 @@ def _isolar_appdata() -> None:
     atexit.register(shutil.rmtree, pasta, True)
 
 
+def _isolar_canal() -> None:
+    """Da a este processo um canal de instancia unica so' dele.
+
+    Sem isto a suite usa o canal DE PRODUCAO, e passa a brigar com o programa
+    que o usuario pode ter aberto: "entregar devolve False quando nao ha'
+    ninguem" falha porque ha' alguem -- a janela de verdade --, e a suite chega
+    a mandar pedidos de abrir arquivo para ela.
+
+    Aconteceu, e as duas falhas pareciam regressao do codigo. Mesmo motivo do
+    `_isolar_appdata`: teste nao usa recurso de producao.
+    """
+    from tfedit import instancia_unica
+
+    os.environ.setdefault(
+        instancia_unica.VARIAVEL_DO_CANAL,
+        f"TextForgeEdit-teste-{os.getpid()}-{uuid.uuid4().hex[:8]}")
+
+
 def preparar_qt() -> bool:
     """Prepara uma QApplication invisivel. False se PySide6 nao esta' instalado.
 
@@ -135,6 +154,7 @@ def preparar_qt() -> bool:
     """
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     _isolar_appdata()
+    _isolar_canal()
     try:
         from PySide6.QtWidgets import QApplication
     except ImportError:

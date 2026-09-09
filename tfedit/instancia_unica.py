@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import getpass
 import json
+import os
 
 from PySide6.QtCore import QObject, QThread, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -54,8 +55,23 @@ ESPERA_MS = 700
 TENTATIVAS = 3
 
 
+#: Variavel de ambiente que TROCA o nome do canal.
+#:
+#: Existe para os TESTES. Sem ela a suite usa o canal de producao -- o mesmo do
+#: programa que o usuario pode ter aberto neste instante --, e entao o teste
+#: "entregar devolve False quando nao ha' ninguem" falha porque HA' alguem: a
+#: janela de verdade. Pior: a suite entrega pedidos de arquivo a ela.
+#:
+#: Aconteceu de verdade, e as duas falhas pareciam regressao do codigo. E' a
+#: mesma classe de defeito do %APPDATA% que os testes ja' isolam.
+VARIAVEL_DO_CANAL = "TFEDIT_CANAL"
+
+
 def nome_do_canal() -> str:
     """Canal por usuário. Ver o cabeçalho."""
+    forcado = os.environ.get(VARIAVEL_DO_CANAL)
+    if forcado:
+        return forcado
     try:
         usuario = getpass.getuser()
     except Exception:                     # noqa: BLE001 - depende do ambiente

@@ -176,9 +176,22 @@ icone_arquivo.ico    o TIPO DE ARQUIVO página com canto dobrado, no Explorer
 Com um ícone só, um `.txt` associado fica com cara de **programa** na pasta, e
 não dá para saber olhando se aquilo é o editor ou um arquivo dele.
 
-Mesma família visual do TextForge — fundo ardósia, três linhas de texto — com o
-vinco lateral em **azul** no lugar do laranja-brasa. Cor separa melhor que forma
-a 16 px, que é o tamanho em que o ícone mais aparece.
+Mesma família visual do TextForge — fundo ardósia, barras de texto — com o vinco
+lateral em **azul** no lugar do laranja-brasa.
+
+**Tudo é grosso, e isso não é escolha estética.** A primeira versão tinha um
+vinco de 1 px e três linhas de 1 px sobre um fundo quase preto: no papel parecia
+elegante, na barra de tarefas virou um borrão. Duas lições ficaram, e os testes
+guardam as duas:
+
+- a 16 px, uma forma de 1 px com 1 px de folga **some**. O vinco ocupa 4 px, as
+  barras 3, e são **duas** barras de texto em vez de três;
+- um retângulo `#1E1F22` numa barra de tarefas escura tem quase a cor da barra.
+  O que separa o ícone do fundo é o **vinco azul** — por isso ele é largo.
+
+A página do ícone de arquivo é clara pelo motivo espelhado: ela vive no Explorer,
+onde o fundo é branco, e por isso ganha **borda** — sem ela a silhueta de
+documento desaparece.
 
 `ferramentas/gerar_icone.py` regera os dois **sem Pillow**: os `.ico` são
 versionados justamente para o build funcionar numa máquina que não o tenha, e um

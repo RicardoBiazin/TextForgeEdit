@@ -26,7 +26,7 @@ from __future__ import annotations
 APP = "TextForgeEdit"
 APP_ARQUIVO = "TextForgeEdit"
 
-VERSAO = "0.9.2"
+VERSAO = "0.9.3"
 AUTOR = "Ricardo Biazin"
 
 __version__ = VERSAO

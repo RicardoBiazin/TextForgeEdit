@@ -19,13 +19,24 @@ cabecalho mais um DIB de 32 bits, e um `.png` e' uma sequencia de chunks em zlib
 
 O DESENHO, e por que ele e' assim:
 
-Mesma familia do TextForge -- fundo ardosia, tres linhas de texto -- para os dois
+Mesma familia do TextForge -- fundo ardosia, barras de texto -- para os dois
 programas se reconhecerem como irmaos. O que muda e' a COR do vinco lateral:
-laranja-brasa la', AZUL aqui. Cor separa melhor que forma a 16 px, que e' o
-tamanho em que o icone mais aparece.
+laranja-brasa la', AZUL aqui.
 
-Tudo e' forma cheia e contraste alto pelo mesmo motivo: a 16 px um detalhe fino
-vira sujeira cinza.
+TUDO E' GROSSO, e isso NAO e' escolha estetica.
+
+A primeira versao deste icone tinha um vinco de 1 px e tres linhas de texto de
+1 px sobre um fundo quase preto. No papel parecia elegante; na barra de tarefas
+virou um borrao. Duas licoes ficaram:
+
+  * a 16 px, uma forma de 1 px com 1 px de folga some. As barras ocupam 2 px e
+    o vinco ocupa 3, e por isso sao DUAS barras de texto, e nao tres;
+  * um retangulo #1E1F22 numa barra de tarefas escura tem quase a mesma cor da
+    barra. O que separa o icone do fundo e' o VINCO AZUL, entao ele e' largo.
+
+A pagina do icone de arquivo e' CLARA pelo motivo espelhado: ela vive no
+Explorer, onde o fundo e' branco -- e por isso ganha uma borda, senao a
+silhueta de documento desaparece no branco.
 """
 
 from __future__ import annotations
@@ -40,14 +51,16 @@ RAIZ = pathlib.Path(__file__).resolve().parent.parent
 # Paleta: as mesmas cores do tema escuro, para o icone nao destoar da janela.
 FUNDO = (0x1E, 0x1F, 0x22)
 #: O vinco lateral. AZUL, e nao a brasa laranja do TextForge -- e' o que
-#: distingue os dois de relance numa pasta.
+#: distingue os dois de relance, e e' o que separa o icone de uma barra de
+#: tarefas escura. Ver o cabecalho.
 VINCO = (0x61, 0xAF, 0xEF)
 TEXTO = (0xD6, 0xD8, 0xDC)
-DESTAQUE = (0x98, 0xC3, 0x79)
 
-#: Cor da "pagina" na variante de arquivo: mais clara que o fundo do app, para
-#: a silhueta de documento aparecer mesmo em cima de uma pasta escura.
-PAGINA = (0x2B, 0x2D, 0x31)
+#: A pagina do icone de arquivo, e a tinta escrita nela. Clara porque o Explorer
+#: e' branco atras -- e a borda existe pelo mesmo motivo.
+PAGINA = (0xE8, 0xEA, 0xED)
+TINTA = (0x2B, 0x2D, 0x31)
+BORDA = (0x8A, 0x8F, 0x98)
 
 TAMANHOS = (16, 24, 32, 48, 64, 128, 256)
 
@@ -58,39 +71,29 @@ def _vazia(n: int) -> Imagem:
     return [[(0, 0, 0, 0)] * n for _ in range(n)]
 
 
-def _pintar_linhas(px: Imagem, n: int, *, com_vinco: bool) -> None:
-    """As tres linhas de texto e o vinco lateral, em fracoes do tamanho."""
+def _barra(px: Imagem, n: int, topo: float, altura: float, esquerda: float,
+           direita: float, cor: tuple[int, int, int],
+           somente_sobre=None) -> None:
+    """Um retangulo em fracoes do tamanho, so' sobre pixel ja' opaco.
 
-    def barra(topo: float, altura: float, esquerda: float, direita: float,
-              cor: tuple[int, int, int]) -> None:
-        y0, y1 = int(topo * n), max(int(topo * n) + 1, int((topo + altura) * n))
-        x0, x1 = int(esquerda * n), max(int(esquerda * n) + 1, int(direita * n))
-        for y in range(max(0, y0), min(n, y1)):
-            for x in range(max(0, x0), min(n, x1)):
-                # So' pinta sobre o que ja' e' opaco: e' o que mantem a barra
-                # dentro da silhueta, sem vazar pelo canto arredondado nem pelo
-                # canto dobrado da pagina.
-                if px[y][x][3]:
-                    px[y][x] = (*cor, 255)
-
-    if com_vinco:
-        barra(0.16, 0.68, 0.13, 0.22, VINCO)
-        esquerda, direita = 0.30, 0.84
-    else:
-        # Sem o vinco, as linhas comecam mais a' esquerda: numa pagina estreita
-        # elas ficariam espremidas contra a borda direita.
-        barra(0.20, 0.60, 0.17, 0.24, VINCO)
-        esquerda, direita = 0.32, 0.80
-
-    barra(0.26, 0.09, esquerda, direita, TEXTO)
-    barra(0.45, 0.09, esquerda, esquerda + (direita - esquerda) * 0.66, TEXTO)
-    barra(0.64, 0.09, esquerda, esquerda + (direita - esquerda) * 0.88, DESTAQUE)
+    O `somente_sobre` restringe ainda mais: e' o que impede uma barra de texto
+    de pintar por cima da dobra do canto.
+    """
+    y0, y1 = int(topo * n), max(int(topo * n) + 1, int((topo + altura) * n))
+    x0, x1 = int(esquerda * n), max(int(esquerda * n) + 1, int(direita * n))
+    for y in range(max(0, y0), min(n, y1)):
+        for x in range(max(0, x0), min(n, x1)):
+            if not px[y][x][3]:
+                continue
+            if somente_sobre is not None and px[y][x][:3] != somente_sobre:
+                continue
+            px[y][x] = (*cor, 255)
 
 
 def desenhar_app(n: int) -> Imagem:
     """O icone do PROGRAMA: quadrado de cantos arredondados."""
     px = _vazia(n)
-    raio = max(1, n // 6)
+    raio = max(1, n // 7)
 
     def dentro(x: int, y: int) -> bool:
         for cx, cy in ((raio, raio), (n - 1 - raio, raio),
@@ -106,36 +109,46 @@ def desenhar_app(n: int) -> Imagem:
             if dentro(x, y):
                 px[y][x] = (*FUNDO, 255)
 
-    _pintar_linhas(px, n, com_vinco=True)
+    # O vinco LARGO da esquerda: e' ele que separa o icone do fundo escuro.
+    _barra(px, n, 0.12, 0.76, 0.12, 0.32, VINCO)
+    # DUAS barras grossas, e nao tres finas. Ver o cabecalho.
+    _barra(px, n, 0.28, 0.14, 0.40, 0.86, TEXTO)
+    _barra(px, n, 0.56, 0.14, 0.40, 0.68, TEXTO)
     return px
 
 
 def desenhar_arquivo(n: int) -> Imagem:
-    """O icone do TIPO DE ARQUIVO: pagina com o canto de cima cortado.
+    """O icone do TIPO DE ARQUIVO: pagina clara com o canto dobrado em azul.
 
-    A dobra e' proporcional e nunca menor que dois pixels: a 16 px uma dobra de
+    A dobra e' proporcional e nunca menor que tres pixels: a 16 px uma dobra de
     um pixel some, e o icone vira um retangulo indistinguivel do app.
     """
     px = _vazia(n)
-    margem = max(1, n // 8)                 # a pagina nao encosta na borda
-    dobra = max(2, n // 4)
+    margem = max(1, n // 10)
+    dobra = max(3, n // 4)
     esquerda, direita = margem, n - margem
-    topo, base = max(0, n // 16), n - max(1, n // 16)
+    topo, base = margem, n - margem
 
     for y in range(topo, base):
         for x in range(esquerda, direita):
-            # O corte diagonal do canto superior direito.
             if (direita - x) + (y - topo) <= dobra:
-                continue
-            px[y][x] = (*PAGINA, 255)
+                continue        # o canto cortado
+            na_borda = (x in (esquerda, direita - 1)
+                        or y in (topo, base - 1)
+                        or (direita - x) + (y - topo) == dobra + 1)
+            px[y][x] = (*(BORDA if na_borda else PAGINA), 255)
 
-    # A "aba" da dobra, um tom mais claro, para o canto nao parecer so' cortado.
+    # A dobra, em AZUL: e' a marca do editor, e a unica cor do icone.
     for y in range(topo, topo + dobra):
         for x in range(direita - dobra, direita):
             if (direita - x) + (y - topo) > dobra and y - topo < dobra:
-                px[y][x] = (0x3A, 0x3D, 0x43, 255)
+                px[y][x] = (*VINCO, 255)
 
-    _pintar_linhas(px, n, com_vinco=False)
+    # Tres barras de tinta, so' sobre o miolo da pagina: `somente_sobre` impede
+    # que elas invadam a borda ou a dobra.
+    _barra(px, n, 0.40, 0.10, 0.22, 0.74, TINTA, somente_sobre=PAGINA)
+    _barra(px, n, 0.58, 0.10, 0.22, 0.60, TINTA, somente_sobre=PAGINA)
+    _barra(px, n, 0.76, 0.10, 0.22, 0.70, TINTA, somente_sobre=PAGINA)
     return px
 
 

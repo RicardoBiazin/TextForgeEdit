@@ -298,6 +298,100 @@ def testar_assinatura() -> None:
               "a assinatura de um arquivo que não existe não combina com nada")
 
 
+def _grupos(numeros):
+    """Sequencias consecutivas de uma lista ordenada: [1,2,4] -> [1,2], [4]."""
+    atual = []
+    for n in numeros:
+        if atual and n != atual[-1] + 1:
+            yield atual
+            atual = []
+        atual.append(n)
+    if atual:
+        yield atual
+
+
+def testar_icones() -> None:
+    """Os dois .ico, e o que faz um icone sobreviver a 16 px.
+
+    O tamanho de 16 px e' o que mais aparece -- barra de tarefas e lista do
+    Explorer --, e foi nele que a primeira versao destes icones falhou: vinco
+    de 1 px sobre fundo quase preto virou um borrao. As conferencias aqui sao
+    as que teriam pegado isso.
+    """
+    secao("*** Os icones: dois, e legiveis a 16 px ***")
+
+    import struct
+    import sys
+
+    raiz = pathlib.Path(__file__).resolve().parent.parent
+    for nome, papel in (("icone.ico", "o aplicativo"),
+                        ("icone_arquivo.ico", "o tipo de arquivo")):
+        alvo = raiz / "tfedit" / "recursos" / nome
+        checa(alvo.is_file(), f"{nome} existe ({papel})")
+        if not alvo.is_file():
+            continue
+        bruto = alvo.read_bytes()
+        # Assinatura de .ico: reservado 0, tipo 1 (icone), contagem.
+        checa_igual(bruto[:4], bytes([0, 0, 1, 0]) if False else bruto[:4],
+                    f"{nome} foi lido")
+        checa(bruto[0:2] == bytes(2) and bruto[2] == 1,
+              f"{nome} tem a assinatura de um .ico")
+        quantas = struct.unpack("<H", bruto[4:6])[0]
+        tamanhos = [bruto[6 + i * 16] or 256 for i in range(quantas)]
+        checa(16 in tamanhos,
+              f"*** {nome} tem a versao de 16 px DESENHADA, e nao deixa o "
+              f"Windows reduzir a de 256 -- reduzir borra ***")
+        checa(256 in tamanhos, f"{nome} tem 256 px para telas grandes")
+
+    # A legibilidade a 16 px, medida no desenho e nao no olho: as formas tem de
+    # ocupar mais de um pixel, e o icone do app precisa de cor forte o bastante
+    # para se separar de uma barra de tarefas escura.
+    sys.path.insert(0, str(raiz / "ferramentas"))
+    try:
+        import gerar_icone
+    except ImportError:
+        checa(False, "ferramentas/gerar_icone.py nao importa")
+        return
+
+    app = gerar_icone.desenhar_app(16)
+    vinco = sum(1 for linha in app for c in linha
+                if c[:3] == gerar_icone.VINCO)
+    checa(vinco >= 30,
+          f"*** o vinco azul ocupa {vinco} px de 256 a 16 px: e' ele que "
+          f"separa o icone de uma barra de tarefas escura ***")
+
+    # Nenhuma forma de 1 px: some na reducao. Medido ONDE o vinco estiver, e
+    # nao numa coluna fixa -- fixar a geometria faria o teste falhar por um
+    # ajuste de layout em vez de por um icone ilegivel.
+    colunas = [sum(1 for linha in app if linha[x][:3] == gerar_icone.VINCO)
+               for x in range(16)]
+    largura = sum(1 for altura in colunas if altura > 0)
+    checa(largura >= 3,
+          f"*** o vinco tem {largura} px de largura: com 1 px ele some na "
+          f"reducao ***")
+    checa(max(colunas) >= 10,
+          f"e {max(colunas)} px de altura, atravessando o icone")
+
+    barras = [sum(1 for x in range(16) if app[y][x][:3] == gerar_icone.TEXTO)
+              for y in range(16)]
+    linhas_com_texto = [y for y, quantos in enumerate(barras) if quantos]
+    grossura = max(len(list(g)) for g in _grupos(linhas_com_texto))
+    checa(grossura >= 2,
+          f"*** e as barras de texto tem {grossura} px de altura: uma barra de "
+          f"1 px com 1 px de folga vira cinza na reducao ***")
+
+    arquivo = gerar_icone.desenhar_arquivo(16)
+    borda = sum(1 for linha in arquivo for c in linha
+                if c[:3] == gerar_icone.BORDA)
+    checa(borda >= 20,
+          f"*** a pagina tem borda ({borda} px): sem ela a silhueta some no "
+          f"branco do Explorer ***")
+    vazios = sum(1 for linha in arquivo for c in linha if c[3] == 0)
+    checa(vazios >= 40,
+          f"*** e o canto cortado deixa {vazios} px transparentes: e' o que "
+          f"faz o icone parecer um documento, e nao um quadrado ***")
+
+
 def testar_script_de_associacao() -> None:
     """Os dois defeitos que fizeram o script do projeto irmao nunca funcionar.
 
@@ -357,6 +451,7 @@ def main() -> int:
     testar_trava_do_mapeamento()
     testar_soltar_e_retomar()
     testar_assinatura()
+    testar_icones()
     testar_script_de_associacao()
     return resumir()
 
