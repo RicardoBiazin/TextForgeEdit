@@ -22,6 +22,8 @@ RAIZ = os.path.dirname(AQUI)
 LIMITE_POR_SUITE_S = 180
 
 LIMITE_PROPRIO_S: dict[str, int] = {
+    # Compara dois arquivos de 200 mil linhas para provar o algoritmo.
+    "teste_comparacao.py": 300,
     # Cria um CSV de 200 mil linhas para provar que a grade nao le tudo.
     "teste_visualizadores.py": 300,
     # Gera dezenas de MB em %TEMP% e mede memoria.
@@ -51,6 +53,8 @@ SUITES = [
      "realce de sintaxe na fatia: 24 linguagens e a semente de contexto"),
     ("teste_csv_dialeto.py",
      "dialeto de CSV: delimitador pela consistencia, nao pela frequencia"),
+    ("teste_comparacao.py",
+     "comparar dois arquivos: ancoras de linha unica, e o alinhamento valido"),
     ("teste_configuracoes.py",
      "a tela de preferencias: nenhuma opcao que finge existir"),
     ("teste_formatadores.py",

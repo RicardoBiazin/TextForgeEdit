@@ -163,6 +163,42 @@ de 100 MB o arquivo abre como arquivo comum, onde as garantias de memória do
 editor voltam a valer. Um `.zip` renomeado para `.xlsx` também é recusado — a
 detecção olha o conteúdo.
 
+## Comparar arquivos
+
+`Ferramentas → Comparar arquivos` (`Ctrl+D`): dois painéis alinhados, com `F7` e
+`Shift+F7` pulando de diferença em diferença. Verde o que só existe à direita,
+vermelho o que só existe à esquerda, âmbar o que mudou.
+
+**O `difflib` sozinho não serve, e isso foi medido.** Dois arquivos de 200 mil
+linhas com uma mudança a cada dez — duas versões de um export, 10% das linhas
+alteradas — passavam de **dois minutos**:
+
+| linhas | tempo | |
+|---|---|---|
+| 5 mil | 0,24 s | |
+| 10 mil | 0,96 s | 4× |
+| 20 mil | 4,63 s | 4,8× |
+| 40 mil | 27,94 s | 6× |
+
+Dobrar o tamanho quintuplicava o tempo. Não era um teto que resolvia: seria
+preciso recusar qualquer arquivo acima de umas 20 mil linhas.
+
+A saída foi **ancorar nas linhas únicas**, como o diff de paciência do git: uma
+linha que aparece exatamente uma vez nos dois arquivos só pode corresponder a si
+mesma. As âncoras cortam o problema em pedaços pequenos, e o `difflib` só roda
+dentro de cada pedaço. **O mesmo caso passou a 0,37 s.**
+
+Três decisões de memória, todas medidas:
+
+- **compara-se o hash da linha**, não a linha — 8 bytes contra a linha inteira;
+- **o resultado são os blocos**, não as linhas alinhadas. Dois arquivos iguais
+  de 1 GB produzem **um** bloco, e a linha exibida N é resolvida por busca
+  binária. Medido: 200 mil linhas com 20 mil diferenças custam 32 MB;
+- **a pintura lê uma tela por vez** — medido: 5 linhas por painel.
+
+CRLF contra LF **não** é diferença: quem quer ver o terminador usa o
+hexadecimal.
+
 ## Barra de atalhos
 
 Doze botões em quatro grupos — arquivo, edição, busca, visualização —, e a lista

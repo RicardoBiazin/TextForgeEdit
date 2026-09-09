@@ -413,13 +413,21 @@ def testar_botoes_oferecidos_tem_tudo() -> None:
             checa(chave in icones.CATALOGO,
                   f"{chave} tem ícone no catálogo")
 
-        # `comparar` tem icone mas AINDA nao tem comando: nao pode aparecer na
-        # tela, senao vira a "opcao que finge existir" que esta suite combate.
-        checa("comparar" in icones.CATALOGO,
-              "o ícone de comparar já existe")
-        checa("comparar" not in oferecidos,
-              "*** mas ele NÃO é oferecido enquanto o comando não existe: um "
-              "botão que abre 'não implementado' é opção que finge existir ***")
+        # A regra, dos dois lados. Na v0.12.0 `comparar` tinha ícone e NÃO
+        # era oferecido, porque o comando ainda não existia -- um botão que
+        # abre "não implementado" é a opção que finge existir. Na v0.13.0 o
+        # comando chegou, e ele passou a ser oferecido.
+        #
+        # O que este teste guarda não é o caso de `comparar`, e sim a regra:
+        # ícone e comando andam juntos, nos dois sentidos.
+        sem_comando = [c for c in icones.CATALOGO if c in oferecidos
+                       and c not in janela._comandos_da_barra()]
+        checa(not sem_comando,
+              f"*** nada é oferecido sem ter comando: {sem_comando} ***")
+        sem_icone = [c for c in janela._comandos_da_barra()
+                     if c not in icones.CATALOGO]
+        checa(not sem_icone,
+              f"*** e nenhum comando fica sem ícone: {sem_icone} ***")
 
         # E o padrão de fábrica só cita botões que existem.
         from tfedit import configuracao

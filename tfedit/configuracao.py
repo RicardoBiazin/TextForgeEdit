@@ -92,7 +92,7 @@ def padrao() -> dict[str, Any]:
             "desfazer", "refazer",
             "recortar", "copiar", "colar",
             "localizar", "substituir",
-            "visualizar",
+            "visualizar", "comparar",
         ],
 
         # -- limites (ver os cabeçalhos dos módulos citados) -----------------
@@ -119,6 +119,10 @@ def padrao() -> dict[str, Any]:
         # Uma linha maior que isto não é realçada. Um JSON minificado numa
         # linha só tornaria o regex o gargalo da rolagem.
         "limite_realce_por_linha": 10000,
+        # Linhas por arquivo ao comparar. O alinhamento é por âncoras de linha
+        # única (ver `comparacao.py`), mas um arquivo em que quase toda linha
+        # se repete não tem âncora, e aí o custo volta a crescer.
+        "limite_de_comparacao": 500000,
     }
 
 

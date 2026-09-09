@@ -43,6 +43,7 @@ OBRIGATORIOS = (
     "tfedit.formatadores.de_css", "tfedit.formatadores.de_html",
     "tfedit.formatadores.de_sql",
     "tfedit.interface.configuracoes", "tfedit.interface.icones",
+    "tfedit.comparacao", "tfedit.interface.comparacao",
 )
 
 

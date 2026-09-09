@@ -176,6 +176,99 @@ class JanelaPrincipal(QMainWindow):
         self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para cá")
 
     # ==================================================================
+    # Comparar
+    # ==================================================================
+
+    def comparar_arquivos(self) -> None:
+        """Compara dois arquivos lado a lado, numa janela própria.
+
+        Parte do arquivo da aba atual quando há um: comparar quase sempre é
+        "este contra aquele", e obrigar a escolher os dois seria um clique a
+        mais em todo uso.
+        """
+        aba = self.aba_atual
+        if aba is not None and aba.e_planilha:
+            self.barra.showMessage(
+                "Comparar vale para arquivos de texto. Uma planilha é um "
+                "pacote ZIP: compare depois de exportar em CSV.", 8000)
+            return
+
+        primeiro = None if aba is None or aba.e_rascunho else aba.caminho
+        if primeiro is None:
+            escolhido, _ = QFileDialog.getOpenFileName(
+                self, "Comparar: primeiro arquivo",
+                self._pasta_inicial(aba), FILTRO)
+            if not escolhido:
+                return
+            primeiro = pathlib.Path(escolhido)
+
+        segundo, _ = QFileDialog.getOpenFileName(
+            self, f"Comparar {primeiro.name} com...",
+            self._pasta_inicial(aba), FILTRO)
+        if not segundo:
+            return
+        self.comparar(primeiro, pathlib.Path(segundo))
+
+    def comparar(self, caminho_a, caminho_b) -> bool:
+        """O trabalho de comparar. Separado para o teste não abrir diálogo."""
+        from tfedit import codificacao, comparacao as nucleo
+        from tfedit.interface.comparacao import JanelaDeComparacao
+        from tfedit.original import Original
+        from tfedit.pecas import Documento
+
+        caminho_a, caminho_b = pathlib.Path(caminho_a), pathlib.Path(caminho_b)
+        if Aba.chave_de(caminho_a) == Aba.chave_de(caminho_b):
+            self.barra.showMessage(
+                "Os dois caminhos são o mesmo arquivo.", 6000)
+            return False
+
+        abertos = []
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            documentos = []
+            perfis = []
+            for caminho in (caminho_a, caminho_b):
+                original = Original(caminho)
+                abertos.append(original)
+                # O índice INTEIRO, e não só a partida: comparar precisa do
+                # total de linhas dos dois lados antes de começar.
+                original.indexar()
+                documentos.append(Documento(original))
+                perfis.append(codificacao.detectar(
+                    original.ler(0, codificacao.SONDAGEM)))
+
+            teto = int(self.cfg.get("limite_de_comparacao",
+                                    nucleo.TETO_DE_LINHAS))
+            comp = nucleo.comparar(documentos[0], documentos[1], teto=teto)
+        except nucleo.GrandeDemais as exc:
+            for original in abertos:
+                original.fechar()
+            QMessageBox.warning(self, "Arquivos grandes demais", str(exc))
+            return False
+        except OSError as exc:
+            for original in abertos:
+                original.fechar()
+            QMessageBox.warning(self, "Não foi possível comparar", str(exc))
+            return False
+        finally:
+            QApplication.restoreOverrideCursor()
+
+        janela = JanelaDeComparacao(
+            comp, documentos[0], documentos[1],
+            caminho_a.name, caminho_b.name, perfis[0], perfis[1],
+            tema=self.tema, cfg=self.cfg, parent=self)
+        # Os mmap morrem com a janela: sem isto os dois arquivos ficariam
+        # travados no Windows até o programa fechar.
+        janela.destroyed.connect(
+            lambda *_: [original.fechar() for original in abertos])
+        janela.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        janela.show()
+        self._comparacoes = getattr(self, "_comparacoes", [])
+        self._comparacoes.append(janela)
+        self.barra.showMessage(comp.resumo.descrever(), 8000)
+        return True
+
+    # ==================================================================
     # Configurações
     # ==================================================================
 
@@ -230,6 +323,8 @@ class JanelaPrincipal(QMainWindow):
                            "Trocar a visualização"),
             "formatar": (self.formatar_documento,
                          "Formatar documento (Shift+Alt+F)"),
+            "comparar": (self.comparar_arquivos,
+                         "Comparar dois arquivos (Ctrl+D)"),
         }
 
     def _montar_barra_de_atalhos(self) -> None:
@@ -956,6 +1051,10 @@ class JanelaPrincipal(QMainWindow):
              formatar)
         formatar.aboutToShow.connect(self._ajustar_menu_formatar)
         self.menu_formatar = formatar
+
+        ferramentas = self.menuBar().addMenu("&Ferramentas")
+        acao("&Comparar arquivos...", "Ctrl+D", self.comparar_arquivos,
+             ferramentas)
 
         self.menu_view = self.menuBar().addMenu("&Visualizar")
         self.menu_view.aboutToShow.connect(self._montar_menu_view)
