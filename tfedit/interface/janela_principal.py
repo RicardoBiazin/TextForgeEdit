@@ -35,9 +35,15 @@ log = log_interno.obter(__name__)
 FILTRO = ("Arquivos de texto (*.txt *.log *.csv *.dat *.json *.xml *.sql "
           "*.md);;Planilhas (*.xlsx *.xlsm);;Todos os arquivos (*)")
 
-#: Teto de substituicoes de uma vez. Trocar 3 milhoes de ocorrencias uma a uma
-#: na tabela de pecas levaria muito tempo com a interface parada; o teto
-#: transforma isso num aviso em vez de num travamento.
+#: Teto de substituicoes de uma vez, quando a configuracao nao diz outro.
+#:
+#: Trocar 3 milhoes de ocorrencias uma a uma na tabela de pecas levaria muito
+#: tempo com a interface parada; o teto transforma isso num aviso em vez de num
+#: travamento.
+#:
+#: A chave `limite_de_substituicoes` ESTAVA declarada na configuracao e era
+#: ignorada: o codigo usava esta constante direto. O usuario podia edita-la e
+#: nada acontecia -- o pior tipo de opcao, a que finge existir.
 TETO_DE_SUBSTITUICOES = 100_000
 
 #: Comandos do editor que uma view SO' LEITURA sabe atender, e o nome que ela
@@ -166,6 +172,63 @@ class JanelaPrincipal(QMainWindow):
         self.credito.clicado.connect(self.sobre)
         self.barra.addPermanentWidget(self.credito)
         self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste um para cá")
+
+    # ==================================================================
+    # Configurações
+    # ==================================================================
+
+    def abrir_configuracoes(self) -> None:
+        from tfedit.interface.configuracoes import Configuracoes
+
+        dialogo = Configuracoes(self.cfg, self,
+                                botoes_disponiveis=self.botoes_da_barra())
+        if dialogo.exec() != Configuracoes.DialogCode.Accepted:
+            return
+
+        antes = dict(self.cfg)
+        self.cfg = dialogo.valores()
+        if not configuracao.gravar(self.cfg):
+            QMessageBox.warning(
+                self, "Não foi possível salvar as preferências",
+                "As mudanças valem para esta sessão, mas não foram gravadas "
+                "no disco. Veja o log para o motivo.")
+        self.aplicar_configuracao(antes)
+
+    def botoes_da_barra(self) -> tuple:
+        """(chave, rótulo) dos botões que a barra de atalhos oferece.
+
+        Vazio enquanto a barra não existe -- e é o que faz a aba dela sumir da
+        tela de Configurações em vez de mostrar uma lista vazia.
+        """
+        return ()
+
+    def aplicar_configuracao(self, antes: dict) -> None:
+        """Faz valer AGORA o que a tela mudou.
+
+        Sem isto, trocar o tema ou o número de linha só valeria para os
+        arquivos abertos depois -- e a conclusão natural seria que a opção não
+        funciona. O que não dá para aplicar (os limites de leitura, já usados
+        na abertura) a própria tela avisa.
+        """
+        if self.cfg.get("tema") != antes.get("tema"):
+            self.tema = tema_mod.resolver(str(self.cfg.get("tema", "sistema")))
+            for aba in self.todas_as_abas():
+                aba.aplicar_tema(self.tema)
+                if aba.editor is not None:
+                    aba.editor.tema = self.tema
+                    aba.editor.aplicar_cores()
+                    if getattr(aba.editor, "pintor", None) is not None:
+                        aba.editor.pintor.definir_tema(self.tema)
+                        aba.editor.pintor.rehighlight()
+
+        for aba in self.todas_as_abas():
+            aba.cfg = self.cfg
+            if aba.editor is not None:
+                aba.editor.aplicar_configuracao(self.cfg)
+
+        self.barra.showMessage("Preferências salvas.", 5000)
+        log.info("configuracao aplicada: tema=%s, numero de linha=%s",
+                 self.cfg.get("tema"), self.cfg.get("mostrar_numero_de_linha"))
 
     # ==================================================================
     # Formatar
@@ -778,6 +841,8 @@ class JanelaPrincipal(QMainWindow):
         arquivo.addSeparator()
         acao("&Fechar aba", QKeySequence.StandardKey.Close,
              lambda: self.fechar_aba(self.abas.currentIndex()), arquivo)
+        arquivo.addSeparator()
+        acao("&Configurações...", "Ctrl+,", self.abrir_configuracoes, arquivo)
         acao("Sa&ir", QKeySequence.StandardKey.Quit, self.close, arquivo)
 
         editar = self.menuBar().addMenu("&Editar")
@@ -841,8 +906,22 @@ class JanelaPrincipal(QMainWindow):
         return [self.abas.widget(i) for i in range(self.abas.count())
                 if isinstance(self.abas.widget(i), Aba)]
 
+    def _pasta_inicial(self, aba=None) -> str:
+        """Onde os diálogos de arquivo começam.
+
+        A pasta padrão das Configurações vence; sem ela, a pasta do arquivo
+        atual; sem arquivo, o que o sistema escolher.
+        """
+        pasta = str(self.cfg.get("pasta_padrao", "") or "")
+        if pasta and pathlib.Path(pasta).is_dir():
+            return pasta
+        if aba is not None and not aba.e_rascunho:
+            return str(aba.caminho.parent)
+        return ""
+
     def abrir(self) -> None:
-        caminhos, _ = QFileDialog.getOpenFileNames(self, "Abrir", "", FILTRO)
+        caminhos, _ = QFileDialog.getOpenFileNames(
+            self, "Abrir", self._pasta_inicial(self.aba_atual), FILTRO)
         for caminho in caminhos:
             self.abrir_arquivo(caminho)
 
@@ -1062,8 +1141,10 @@ class JanelaPrincipal(QMainWindow):
         if aba.e_rascunho:
             from PySide6.QtCore import QStandardPaths
 
-            pasta = QStandardPaths.writableLocation(
-                QStandardPaths.StandardLocation.DocumentsLocation) or ""
+            pasta = (self._pasta_inicial()
+                     or QStandardPaths.writableLocation(
+                         QStandardPaths.StandardLocation.DocumentsLocation)
+                     or "")
             partida = str(pathlib.Path(pasta) / f"{aba.nome}.txt")
         else:
             partida = str(aba.caminho)
@@ -1225,9 +1306,10 @@ class JanelaPrincipal(QMainWindow):
             return
         aba.sincronizar()
 
+        teto = int(self.cfg.get("limite_de_substituicoes",
+                                TETO_DE_SUBSTITUICOES))
         quantas, cortou = busca.contar(aba.documento, criterio,
-                                       aba.perfil.codec,
-                                       teto=TETO_DE_SUBSTITUICOES)
+                                       aba.perfil.codec, teto=teto)
         if not quantas:
             self.barra_busca.dizer("não encontrado", erro=True)
             return
@@ -1236,7 +1318,7 @@ class JanelaPrincipal(QMainWindow):
                  .replace(",", "."))
         if cortou:
             aviso += (f"<br><br>O arquivo tem MAIS que isso: só as primeiras "
-                      f"{TETO_DE_SUBSTITUICOES:,} serão trocadas nesta "
+                      f"{teto:,} serão trocadas nesta "
                       f"passada.".replace(",", "."))
         if QMessageBox.question(
                 self, "Substituir todas", aviso + "<br><br>Continuar?",
@@ -1246,7 +1328,7 @@ class JanelaPrincipal(QMainWindow):
 
         feitas = busca.substituir_todas(aba.documento, criterio,
                                         aba.perfil.codec, troca,
-                                        teto=TETO_DE_SUBSTITUICOES)
+                                        teto=teto)
         # O documento mudou por baixo da fatia: recarregar e' obrigatorio, senao
         # o editor mostraria o texto de antes das trocas.
         aba.editor.recarregar(aba.editor.linha_atual_no_documento())

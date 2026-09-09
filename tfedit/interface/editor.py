@@ -124,6 +124,32 @@ class EditorDeslizante(QPlainTextEdit):
         self.pintor.definir_provedor(provedor)
         self._semear_realce()
 
+    def aplicar_configuracao(self, cfg: dict) -> None:
+        """Reaplica o que a tela de Configurações pode ter mudado.
+
+        Sem isto, trocar uma preferência só valeria para os arquivos abertos
+        DEPOIS -- e a pessoa concluiria que a opção não funciona.
+        """
+        self.cfg = cfg
+        fonte = QFont(str(cfg.get("fonte", "Consolas")),
+                      int(cfg.get("fonte_tamanho", 11)))
+        fonte.setFixedPitch(True)
+        fonte.setStyleHint(QFont.StyleHint.Monospace)
+        alternativa = str(cfg.get("fonte_alternativa", "Courier New"))
+        if alternativa:
+            fonte.setFamilies([fonte.family(), alternativa])
+        self.setFont(fonte)
+        largura = int(cfg.get("tabulacao", 4))
+        self.setTabStopDistance(
+            QFontMetrics(fonte).horizontalAdvance(" ") * largura)
+        self.setLineWrapMode(
+            QPlainTextEdit.LineWrapMode.WidgetWidth
+            if cfg.get("quebrar_linha") else
+            QPlainTextEdit.LineWrapMode.NoWrap)
+        self._ajustar_margem()
+        self.viewport().update()
+        self.margem.update()
+
     def aplicar_cores(self) -> None:
         """Fundo e texto do editor, vindos do tema."""
         fundo = self.tema.cor("editor.fundo").name()
@@ -314,6 +340,10 @@ class EditorDeslizante(QPlainTextEdit):
     # ==================================================================
 
     def largura_da_margem(self) -> int:
+        # Desligada, a margem tem largura ZERO -- e' assim que ela some sem
+        # precisar esconder o widget nem mexer no layout.
+        if not self.cfg.get("mostrar_numero_de_linha", True):
+            return 0
         total = max(1, self.janela.documento.total_de_linhas)
         digitos = max(4, len(str(total)))
         return 12 + QFontMetrics(self.font()).horizontalAdvance("9") * digitos

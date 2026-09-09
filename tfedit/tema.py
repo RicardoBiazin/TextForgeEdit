@@ -36,7 +36,13 @@ log = log_interno.obter(__name__)
 # realcador estourar no meio do paintEvent.
 PAPEL_PADRAO = "texto"
 
-EMBUTIDOS = ("escuro", "claro")
+#: Os temas que vem no pacote. A ORDEM e' a que a tela de configuracoes
+#: mostra; "escuro" primeiro porque e' o padrao.
+#:
+#: Acrescentar um tema em `recursos/temas/` NAO basta: `carregar()` so' cai no
+#: embutido quando o nome esta' nesta lista, e um tema fora dela e' devolvido
+#: como o escuro -- em silencio, com um aviso so' no log.
+EMBUTIDOS = ("escuro", "claro", "azul")
 
 
 @dataclass

@@ -1,0 +1,283 @@
+"""A tela de Configurações, e a regra que ela existe para fazer valer.
+
+    .\\.venv\\Scripts\\python.exe tests\\teste_configuracoes.py
+
+NENHUMA OPÇÃO QUE NÃO FAZ NADA.
+
+Antes desta tela existir havia os dois lados do defeito, e este arquivo guarda
+os dois:
+
+  * `tema` era LIDO com um padrão embutido e nunca declarado em `padrao()`.
+    Como só o que está declarado vai parar no arquivo de configuração, não
+    havia como o usuário mudá-lo -- a opção existia no código e não existia
+    para quem usa;
+
+  * `limite_de_substituicoes` era o inverso: declarado, editável, e ignorado
+    pelo código, que usava uma constante. Uma opção que finge existir é pior
+    que a ausência dela, porque tira da pessoa a chance de procurar outro
+    caminho.
+
+`testar_toda_chave_e_lida` e `testar_toda_chave_e_declarada` são as duas metades
+dessa regra, e varrem o fonte -- não uma lista escrita à mão, que envelheceria.
+"""
+
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
+                       pular, resumir, secao)
+
+TEM_QT = preparar_qt()
+
+RAIZ = pathlib.Path(__file__).resolve().parent.parent
+LEITURA = re.compile(r"""cfg\.get\(\s*["']([a-z_]+)["']""")
+
+
+def _chaves_lidas() -> dict[str, set[str]]:
+    achadas: dict[str, set[str]] = {}
+    for arquivo in list((RAIZ / "tfedit").rglob("*.py")) + [RAIZ / "app.py"]:
+        for m in LEITURA.finditer(arquivo.read_text(encoding="utf-8")):
+            achadas.setdefault(m.group(1), set()).add(arquivo.name)
+    return achadas
+
+
+# ======================================================================
+# A regra
+# ======================================================================
+
+def testar_toda_chave_e_declarada() -> None:
+    secao("*** Nenhuma chave lida sem estar declarada ***")
+
+    from tfedit import configuracao
+
+    declaradas = set(configuracao.padrao())
+    lidas = _chaves_lidas()
+    faltando = sorted(set(lidas) - declaradas)
+
+    checa(len(lidas) > 10, f"a varredura de fato achou chaves ({len(lidas)})")
+    checa(not faltando,
+          "*** toda chave lida por `cfg.get` está declarada em `padrao()`: "
+          "uma chave ausente nunca chega ao arquivo de configuração, e o "
+          "usuário não tem como mudá-la ***"
+          + "".join(f"\n         {k} (lida em {', '.join(sorted(lidas[k]))})"
+                    for k in faltando))
+
+
+def testar_toda_chave_e_lida() -> None:
+    secao("*** Nenhuma opção que finge existir ***")
+
+    from tfedit import configuracao
+
+    lidas = set(_chaves_lidas())
+    # `recentes` é escrita e lida por função própria, e não por `cfg.get`.
+    conhecidas = lidas | {"recentes"}
+    ignoradas = sorted(k for k in configuracao.padrao() if k not in conhecidas)
+
+    checa(not ignoradas,
+          "*** toda chave declarada é lida por alguém: uma opção editável que "
+          "o código ignora é pior que a ausência dela ***"
+          + "".join(f"\n         {k}" for k in ignoradas))
+
+
+def testar_limite_de_substituicoes_e_obedecido() -> None:
+    secao("*** O teto de substituições vem da CONFIGURAÇÃO ***")
+
+    fonte = (RAIZ / "tfedit/interface/janela_principal.py").read_text(
+        encoding="utf-8")
+    # Era este o defeito: `busca.contar` recebia a constante do módulo, e a
+    # chave da configuração ficava decorativa.
+    checa('teto=TETO_DE_SUBSTITUICOES' not in fonte,
+          "*** a busca NÃO recebe mais a constante direto ***")
+    checa('self.cfg.get("limite_de_substituicoes"' in fonte,
+          "*** e o teto sai da configuração, com a constante só de reserva ***")
+
+
+# ======================================================================
+# A tela
+# ======================================================================
+
+def testar_temas() -> None:
+    secao("Os três temas, e o 'seguir o Windows'")
+
+    from tfedit import tema
+    from tfedit.interface.configuracoes import TEMAS, temas_validos
+
+    disponiveis = tema.disponiveis()
+    for nome in ("escuro", "claro", "azul"):
+        checa(nome in disponiveis, f"o tema {nome} está disponível")
+        carregado = tema.carregar(nome)
+        checa_igual(carregado.nome.lower(), nome,
+                    f"*** e `carregar({nome!r})` devolve ELE, e não o escuro "
+                    f"por engano ***")
+        checa(len(carregado.papeis) >= 30,
+              f"com os {len(carregado.papeis)} papéis de realce")
+
+    azul = tema.carregar("azul")
+    escuro = tema.carregar("escuro")
+    checa(azul.cor("editor.fundo") != escuro.cor("editor.fundo"),
+          "*** o azul tem fundo próprio: derivar do escuro não pode virar "
+          "uma cópia ***")
+    checa_igual(azul.papeis, escuro.papeis,
+                "*** e os papéis de realce são os MESMOS: eles já foram "
+                "escolhidos para ter contraste em fundo escuro ***")
+
+    oferecidos = [c for c, _ in TEMAS]
+    checa_igual(oferecidos, ["sistema", "escuro", "claro", "azul"],
+                "a tela oferece os quatro")
+    checa_igual(temas_validos(), oferecidos,
+                "*** e todos carregam de verdade ***")
+
+
+def testar_dialogo_devolve_o_que_foi_escolhido() -> None:
+    secao("A tela lê e devolve, sem gravar sozinha")
+
+    from tfedit import configuracao
+    from tfedit.interface.configuracoes import Configuracoes
+
+    cfg = configuracao.padrao()
+    dialogo = Configuracoes(cfg, None)
+
+    dialogo.tema.setCurrentIndex(dialogo.tema.findData("azul"))
+    dialogo.numero_de_linha.setChecked(False)
+    dialogo.tamanho.setValue(14)
+    dialogo.substituicoes.setValue(5000)
+
+    novo = dialogo.valores()
+    checa_igual(novo["tema"], "azul", "o tema escolhido volta")
+    checa_igual(novo["mostrar_numero_de_linha"], False, "e o número de linha")
+    checa_igual(novo["fonte_tamanho"], 14, "e o tamanho da fonte")
+    checa_igual(novo["limite_de_substituicoes"], 5000, "e o teto")
+    checa_igual(cfg["tema"], "sistema",
+                "*** e o dicionário ORIGINAL não foi tocado: Cancelar não "
+                "pode deixar resíduo ***")
+
+
+def testar_pasta_inexistente_vira_vazio() -> None:
+    secao("*** Uma pasta padrão que não existe é recusada ***")
+
+    from tfedit import configuracao
+    from tfedit.interface.configuracoes import Configuracoes
+
+    with pasta_temporaria() as pasta:
+        dialogo = Configuracoes(configuracao.padrao(), None)
+        dialogo.pasta.setText(str(pasta))
+        checa_igual(dialogo.valores()["pasta_padrao"], str(pasta),
+                    "uma pasta que existe é guardada")
+
+        dialogo.pasta.setText(str(pasta / "nao" / "existe"))
+        checa_igual(dialogo.valores()["pasta_padrao"], "",
+                    "*** e uma que não existe vira vazio: guardá-la faria o "
+                    "diálogo abrir num lugar qualquer, e a pessoa concluiria "
+                    "que a opção não pegou ***")
+
+
+# ======================================================================
+# Valer AGORA
+# ======================================================================
+
+def _janela():
+    from tfedit import configuracao
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    janela = JanelaPrincipal(configuracao.padrao())
+    janela.novo()
+    return janela
+
+
+def _encerrar(janela) -> None:
+    for aba in janela.todas_as_abas():
+        janela.abas.removeTab(janela.abas.indexOf(aba))
+        aba.encerrar()
+    janela.close()
+
+
+def testar_tema_vale_na_hora() -> None:
+    secao("*** Trocar o tema vale AGORA, e não no próximo arquivo ***")
+
+    janela = _janela()
+    try:
+        aba = janela.aba_atual
+        antes_janela = janela.tema.nome
+        antes_editor = aba.editor.tema.cor("editor.fundo").name()
+
+        anterior = dict(janela.cfg)
+        janela.cfg = {**janela.cfg, "tema": "azul"}
+        janela.aplicar_configuracao(anterior)
+
+        checa_igual(janela.tema.nome, "Azul", "a janela trocou de tema")
+        checa(aba.editor.tema.cor("editor.fundo").name() != antes_editor,
+              f"*** e o editor JÁ ABERTO trocou também "
+              f"({antes_editor} -> {aba.editor.tema.cor('editor.fundo').name()}) "
+              f"-- se só valesse para o próximo arquivo, a conclusão seria "
+              f"que a opção não funciona ***")
+        checa(janela.tema.nome != antes_janela, "e mudou de fato")
+    finally:
+        _encerrar(janela)
+
+
+def testar_numero_de_linha_vale_na_hora() -> None:
+    secao("*** Desligar o número de linha vale AGORA ***")
+
+    janela = _janela()
+    try:
+        aba = janela.aba_atual
+        com = aba.editor.largura_da_margem()
+        checa(com > 0, f"com número de linha, a margem tem {com} px")
+
+        anterior = dict(janela.cfg)
+        janela.cfg = {**janela.cfg, "mostrar_numero_de_linha": False}
+        janela.aplicar_configuracao(anterior)
+
+        checa_igual(aba.editor.largura_da_margem(), 0,
+                    "*** desligado, a margem tem largura ZERO: é assim que "
+                    "ela some sem mexer no layout ***")
+
+        anterior = dict(janela.cfg)
+        janela.cfg = {**janela.cfg, "mostrar_numero_de_linha": True}
+        janela.aplicar_configuracao(anterior)
+        checa_igual(aba.editor.largura_da_margem(), com, "e volta igual")
+    finally:
+        _encerrar(janela)
+
+
+def testar_menu_tem_configuracoes() -> None:
+    secao("O menu Arquivo tem Configurações")
+
+    janela = _janela()
+    try:
+        arquivo = next((a.menu() for a in janela.menuBar().actions()
+                        if "Arquivo" in a.text()), None)
+        checa(arquivo is not None, "o menu Arquivo existe")
+        if arquivo is None:
+            return
+        rotulos = [a.text() for a in arquivo.actions()]
+        checa(any("Configura" in r for r in rotulos),
+              f"*** e tem Configurações: {[r for r in rotulos if r]} ***")
+    finally:
+        _encerrar(janela)
+
+
+def main() -> int:
+    if not TEM_QT:
+        return pular("PySide6 nao esta' instalado")
+
+    from PySide6.QtWidgets import QApplication
+    QApplication.instance() or QApplication([])
+
+    testar_toda_chave_e_declarada()
+    testar_toda_chave_e_lida()
+    testar_limite_de_substituicoes_e_obedecido()
+    testar_temas()
+    testar_dialogo_devolve_o_que_foi_escolhido()
+    testar_pasta_inexistente_vira_vazio()
+    testar_tema_vale_na_hora()
+    testar_numero_de_linha_vale_na_hora()
+    testar_menu_tem_configuracoes()
+    return resumir()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

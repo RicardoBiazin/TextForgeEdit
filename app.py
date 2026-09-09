@@ -42,6 +42,7 @@ OBRIGATORIOS = (
     "tfedit.formatadores.de_json", "tfedit.formatadores.de_xml",
     "tfedit.formatadores.de_css", "tfedit.formatadores.de_html",
     "tfedit.formatadores.de_sql",
+    "tfedit.interface.configuracoes",
 )
 
 

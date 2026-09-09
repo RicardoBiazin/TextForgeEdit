@@ -163,6 +163,35 @@ de 100 MB o arquivo abre como arquivo comum, onde as garantias de memória do
 editor voltam a valer. Um `.zip` renomeado para `.xlsx` também é recusado — a
 detecção olha o conteúdo.
 
+## Configurações
+
+`Arquivo → Configurações` (`Ctrl+,`): tema (escuro, claro, **azul** ou seguir o
+Windows), pasta padrão dos diálogos, número de linha, fonte, e os limites de
+leitura.
+
+**Duas regras, e as duas estão travadas por teste** que varre o fonte — não uma
+lista à mão, que envelheceria:
+
+- **Nenhuma chave lida sem estar declarada.** `tema` era lido com um padrão
+  embutido e nunca declarado; como só o declarado chega ao arquivo de
+  configuração, **não havia como mudar o tema**. Eram cinco chaves nessa
+  situação.
+- **Nenhuma opção que finge existir.** `limite_de_substituicoes` era o inverso:
+  declarado, editável, e ignorado — o código usava uma constante. Uma opção que
+  não faz nada é pior que a ausência dela, porque tira a chance de a pessoa
+  procurar outro caminho.
+
+**O que dá para aplicar na hora, aplica na hora.** Tema, número de linha, fonte
+e quebra de linha valem nos arquivos **já abertos** ao fechar a janela — se só
+valessem no próximo arquivo, a conclusão natural seria que a opção não funciona.
+Os limites de leitura já foram usados na abertura, e a própria tela avisa isso.
+
+O tema **azul** é derivado do escuro, e não escrito do zero: só as superfícies
+mudam de matiz. Os 40 papéis de realce passam intactos — eles já foram
+escolhidos para ter contraste em fundo escuro, e um tema digitado à mão
+esqueceria alguns (e `tema.cor` só avisa no log, então o esquecimento viraria um
+realce monocromático sem erro visível).
+
 ## Abrir já com um documento pronto
 
 O programa nunca abre numa janela vazia: sem arquivo na linha de comando e sem
@@ -170,7 +199,8 @@ sessão a restaurar, ele cria um **Sem título 1** pronto para digitar. `Ctrl+N`
 cria outro a qualquer momento.
 
 **O documento novo é um arquivo de verdade**, vazio, numa pasta interna
-(`%APPDATA%\TextForgeEditascunhos`). Não é detalhe de implementação — é o que
+(`%APPDATA%\TextForgeEdit
+ascunhos`). Não é detalhe de implementação — é o que
 faz ele passar exatamente pelo mesmo código de um arquivo de 1 GB: mesma tabela
 de peças, mesmo desfazer, mesma gravação por streaming. Um caminho paralelo "sem
 arquivo" seria uma segunda implementação de tudo isso, e as duas divergiriam na

@@ -65,6 +65,9 @@ def padrao() -> dict[str, Any]:
         "fonte_tamanho": 11,
         "tabulacao": 4,
         "quebrar_linha": False,
+        # "escuro", "claro", "azul" ou "sistema" (segue o Windows).
+        "tema": "sistema",
+        "mostrar_numero_de_linha": True,
 
         # -- janela ---------------------------------------------------------
         "janela_largura": 1150,
@@ -74,6 +77,23 @@ def padrao() -> dict[str, Any]:
         # -- comportamento --------------------------------------------------
         "restaurar_sessao": True,
         "recentes": [],
+        # Onde os diálogos de abrir e salvar começam. Vazio = a pasta do
+        # arquivo atual, que é o comportamento do sistema.
+        "pasta_padrao": "",
+
+        # -- barra de atalhos -----------------------------------------------
+        "mostrar_barra": True,
+        # Os botões, NA ORDEM em que aparecem. Marcáveis na tela de
+        # Configurações. Uma chave desconhecida aqui é ignorada, e um botão
+        # novo do programa só entra na barra de quem pedir -- assim uma
+        # atualização não reordena a barra de ninguém.
+        "botoes_da_barra": [
+            "novo", "abrir", "salvar", "salvar_tudo",
+            "desfazer", "refazer",
+            "recortar", "copiar", "colar",
+            "localizar", "substituir",
+            "visualizar", "comparar",
+        ],
 
         # -- limites (ver os cabeçalhos dos módulos citados) -----------------
         # Linhas que a janela viva segura de cada vez. Ver `janela.py`.
@@ -84,6 +104,21 @@ def padrao() -> dict[str, Any]:
         # enquanto ele está mapeado, nenhum outro programa consegue regravar o
         # arquivo no Windows. Zero desliga a liberação.
         "soltar_arquivo_apos_s": 20,
+
+        # Estas cinco ERAM lidas pelo código e não estavam declaradas aqui.
+        # A diferença não é cosmética: uma chave ausente nunca aparece no
+        # arquivo de configuração, então não havia como o usuário mudá-la --
+        # `tema` inclusive, que a janela lia com um padrão embutido.
+        # Acima disto um .xlsx abre como arquivo comum. Ver `interface/aba.py`.
+        "limite_planilha_mb": 100,
+        # Células lidas de uma planilha antes de ela virar somente leitura.
+        "limite_celulas_planilha": 500000,
+        # Acima disto o realce de sintaxe desliga: colorir 200 MB pararia a
+        # rolagem. Ver `realce/pintor.py`.
+        "limite_realce_mb": 8,
+        # Uma linha maior que isto não é realçada. Um JSON minificado numa
+        # linha só tornaria o regex o gargalo da rolagem.
+        "limite_realce_por_linha": 10000,
     }
 
 
