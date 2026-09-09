@@ -685,6 +685,184 @@ def testar_menu_do_rodape_nao_trava() -> None:
             encerrar(janela)
 
 
+
+def testar_documento_novo() -> None:
+    secao("*** Um documento novo, pronto para digitar ***")
+
+    from tfedit.interface.aba import SemDestino
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        janela = JanelaPrincipal()
+        try:
+            checa_igual(janela.abas.count(), 0, "a janela comeca vazia")
+            checa(janela.novo(), "novo() cria a aba")
+
+            aba = janela.aba_atual
+            checa_igual(janela.abas.count(), 1, "uma aba")
+            checa_igual(aba.titulo, "Sem título 1", "com o nome provisorio")
+            checa(aba.e_rascunho, "e ela se declara rascunho")
+            checa(aba.rascunho_intocado, "intocado, porque ninguem digitou")
+
+            # O arquivo de trabalho existe DE VERDADE: e' o que faz o documento
+            # novo passar pelo mesmo codigo de um arquivo de 1 GB, em vez de um
+            # caminho paralelo "sem arquivo" que iria divergir.
+            checa(aba.caminho.is_file(),
+                  f"*** ha' um arquivo de trabalho no disco: "
+                  f"{aba.caminho.name} ***")
+            checa_igual(aba.caminho.stat().st_size, 0, "e ele nasce vazio")
+            checa(not aba.editor.isReadOnly(),
+                  "*** e da' para digitar na hora ***")
+
+            aba.editor.insertPlainText("primeira linha\n")
+            aba.editor.sincronizar()
+            checa(aba.modificado, "digitar marca como modificado")
+            checa_igual(aba.titulo, "*Sem título 1", "com o asterisco")
+            checa(not aba.rascunho_intocado, "e deixa de ser intocado")
+        finally:
+            encerrar(janela)
+
+
+def testar_rascunho_nao_grava_escondido() -> None:
+    secao("*** Ctrl+S num documento novo PERGUNTA onde salvar ***")
+
+    from tfedit.interface.aba import SemDestino
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        janela = JanelaPrincipal()
+        try:
+            janela.novo()
+            aba = janela.aba_atual
+            aba.editor.insertPlainText("texto que nao pode sumir\n")
+            aba.editor.sincronizar()
+
+            # Gravar no arquivo de trabalho esconderia o texto numa pasta
+            # interna, e a pessoa nunca mais o encontraria. A aba RECUSA, e
+            # quem chama e' que pergunta o destino.
+            levantou = False
+            try:
+                aba.salvar()
+            except SemDestino:
+                levantou = True
+            checa(levantou,
+                  "*** salvar sem destino e' recusado, e nao gravado numa "
+                  "pasta interna ***")
+
+            destino = tmp / "escolhido.txt"
+            escritos = aba.salvar(destino)
+            checa(escritos > 0, f"salvar com destino grava ({escritos} bytes)")
+            checa_igual(destino.read_bytes(), b"texto que nao pode sumir\r\n",
+                        "*** e o conteudo chega inteiro ao arquivo ***")
+            checa(not aba.e_rascunho,
+                  "*** depois de salvo, deixa de ser rascunho ***")
+            checa_igual(aba.titulo, "escolhido.txt", "e passa a usar o nome real")
+        finally:
+            encerrar(janela)
+
+
+def testar_rascunho_some_do_disco() -> None:
+    secao("*** O arquivo de trabalho nao fica para tras ***")
+
+    from tfedit.interface.aba import pasta_de_rascunhos
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        janela = JanelaPrincipal()
+        janela.novo()
+        aba = janela.aba_atual
+        trabalho = aba.caminho
+        checa(trabalho.is_file(), "o arquivo de trabalho existe")
+
+        # Fechar a aba leva o arquivo junto. A ordem importa: no Windows o mmap
+        # SEGURA o arquivo, e apagar antes de `fechar()` falharia.
+        encerrar(janela)
+        checa(not trabalho.exists(),
+              "*** e some quando a aba fecha ***")
+
+        # E o que sobrou de um fechamento anormal e' varrido -- so' o ANTIGO,
+        # porque um rascunho recente pode ser de outra janela aberta agora.
+        janela2 = JanelaPrincipal()
+        try:
+            janela2.novo()
+            vivo = janela2.aba_atual.caminho
+            velho = pasta_de_rascunhos() / "sem-titulo-9999-1.txt"
+            velho.write_bytes(b"")
+            import os
+            import time
+            antigo = time.time() - 30 * 86400
+            os.utime(velho, (antigo, antigo))
+
+            from tfedit.interface.aba import limpar_rascunhos_antigos
+            limpar_rascunhos_antigos()
+            checa(not velho.exists(),
+                  "*** um rascunho de 30 dias e' varrido ***")
+            checa(vivo.is_file(),
+                  "*** e o da janela ABERTA agora nao e' tocado ***")
+        finally:
+            encerrar(janela2)
+
+
+def testar_abrir_fecha_o_rascunho_vazio() -> None:
+    secao("*** Abrir um arquivo some com o 'Sem titulo' vazio ***")
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo = gerar(tmp, "real.txt", 50)
+        janela = JanelaPrincipal()
+        try:
+            janela.novo()
+            checa_igual(janela.abas.count(), 1, "so' o rascunho")
+
+            checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
+            nomes = [janela.abas.widget(i).titulo
+                     for i in range(janela.abas.count())]
+            checa_igual(nomes, ["real.txt"],
+                        "*** o rascunho VAZIO saiu: senao o editor acumularia "
+                        "uma aba em branco por sessao ***")
+
+            # Mas um rascunho em que alguem DIGITOU e' trabalho, e fica.
+            janela.novo()
+            janela.aba_atual.editor.insertPlainText("nao me feche")
+            janela.aba_atual.editor.sincronizar()
+            outro = gerar(tmp, "segundo.txt", 30)
+            janela.abrir_arquivo(str(outro))
+            nomes = [janela.abas.widget(i).titulo
+                     for i in range(janela.abas.count())]
+            checa(any("Sem título" in n for n in nomes),
+                  f"*** e o rascunho COM texto sobrevive: {nomes} ***")
+        finally:
+            encerrar(janela)
+
+
+def testar_menu_tem_novo() -> None:
+    secao("O menu Arquivo tem Novo, com Ctrl+N")
+
+    from PySide6.QtGui import QKeySequence
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    janela = JanelaPrincipal()
+    try:
+        arquivo = None
+        for acao in janela.menuBar().actions():
+            if "Arquivo" in acao.text():
+                arquivo = acao.menu()
+                break
+        checa(arquivo is not None, "o menu Arquivo existe")
+        if arquivo is None:
+            return
+        rotulos = [a.text() for a in arquivo.actions()]
+        checa(any("Novo" in r for r in rotulos),
+              f"*** e tem Novo: {rotulos[:3]} ***")
+        novo = next(a for a in arquivo.actions() if "Novo" in a.text())
+        checa_igual(novo.shortcut(),
+                    QKeySequence(QKeySequence.StandardKey.New),
+                    "com o atalho padrao do sistema (Ctrl+N)")
+    finally:
+        encerrar(janela)
+
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -700,6 +878,11 @@ def main() -> int:
     testar_credito_no_rodape()
     testar_rodape_clicavel()
     testar_menu_do_rodape_nao_trava()
+    testar_documento_novo()
+    testar_rascunho_nao_grava_escondido()
+    testar_rascunho_some_do_disco()
+    testar_abrir_fecha_o_rascunho_vazio()
+    testar_menu_tem_novo()
     testar_log()
     return resumir()
 

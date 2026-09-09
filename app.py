@@ -175,6 +175,7 @@ def main() -> int:
     from tfedit import (APP, VERSAO, cli, configuracao, idioma,
                         instancia_unica, log_interno)
     from tfedit.interface.janela_principal import JanelaPrincipal
+    from tfedit.interface.aba import limpar_rascunhos_antigos
 
     # O log e a captura de erro entram ANTES de qualquer widget: uma excecao na
     # montagem da janela e' justamente a que nao deixa rastro sem isto.
@@ -213,6 +214,10 @@ def main() -> int:
     servidor.pedido_recebido.connect(janela.atender_pedido)
     janela.show()
 
+    # Rascunhos que sobraram de um fechamento anormal. Antes de criar o
+    # primeiro documento novo, para a pasta não crescer sem fim.
+    limpar_rascunhos_antigos()
+
     # A sessão volta antes dos arquivos da linha de comando: assim o arquivo
     # que o usuário PEDIU agora fica em foco, e não uma aba antiga.
     if not pedido.arquivos:
@@ -223,6 +228,12 @@ def main() -> int:
     # de trabalho sem sinal de vida.
     for caminho in pedido.arquivos:
         janela.abrir_arquivo(caminho)
+
+    # NUNCA abrir numa janela vazia. Sem isto, quem inicia o programa sem
+    # arquivo encara uma área cinza e uma frase pedindo que abra alguma coisa --
+    # e um editor de texto tem de estar pronto para digitar.
+    if janela.aba_atual is None:
+        janela.novo()
     if pedido.linha and janela.aba_atual is not None:
         janela.aba_atual.editor.ir_para_linha(pedido.linha - 1)
     for bruto, motivo in pedido.recusados:

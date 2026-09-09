@@ -163,6 +163,31 @@ de 100 MB o arquivo abre como arquivo comum, onde as garantias de memória do
 editor voltam a valer. Um `.zip` renomeado para `.xlsx` também é recusado — a
 detecção olha o conteúdo.
 
+## Abrir já com um documento pronto
+
+O programa nunca abre numa janela vazia: sem arquivo na linha de comando e sem
+sessão a restaurar, ele cria um **Sem título 1** pronto para digitar. `Ctrl+N`
+cria outro a qualquer momento.
+
+**O documento novo é um arquivo de verdade**, vazio, numa pasta interna
+(`%APPDATA%\TextForgeEditascunhos`). Não é detalhe de implementação — é o que
+faz ele passar exatamente pelo mesmo código de um arquivo de 1 GB: mesma tabela
+de peças, mesmo desfazer, mesma gravação por streaming. Um caminho paralelo "sem
+arquivo" seria uma segunda implementação de tudo isso, e as duas divergiriam na
+primeira correção feita só numa delas.
+
+Três consequências, e as três estão travadas por teste:
+
+- **`Ctrl+S` pergunta onde salvar.** Gravar no arquivo de trabalho esconderia o
+  texto numa pasta interna, e você nunca mais o encontraria.
+- **O arquivo de trabalho some** quando a aba fecha — depois de soltar o mmap,
+  que no Windows segura o arquivo. E o que sobrou de um fechamento anormal é
+  varrido no arranque, só o que tem mais de sete dias: um rascunho recente pode
+  ser de outra janela aberta agora.
+- **Abrir um arquivo fecha o "Sem título" vazio**, senão o editor acumularia uma
+  aba em branco por sessão. Só o intocado sai — um rascunho em que você digitou
+  é trabalho.
+
 ## Ícones
 
 Dois, e não um — são coisas diferentes, e o Explorer as mostra em lugares

@@ -30,6 +30,7 @@ com caixa diferente pelo Explorer, pela forma curta 8.3 e por caminho relativo.
 
 from __future__ import annotations
 
+import os
 import pathlib
 from dataclasses import replace
 
@@ -53,8 +54,70 @@ log = log_interno.obter(__name__)
 EXTENSOES_DE_PLANILHA = frozenset({".xlsx", ".xlsm"})
 
 
+class SemDestino(ValueError):
+    """Pediram para gravar um documento que ainda nao tem arquivo."""
+
+
 class NaoEPlanilha(ValueError):
     """A extensao prometia planilha e o conteudo nao e' uma."""
+
+
+def pasta_de_rascunhos() -> pathlib.Path:
+    """Onde moram os arquivos dos documentos ainda sem nome.
+
+    NAO e' o %TEMP% do sistema, e a diferenca importa: uma pasta so' nossa deixa
+    varrer o que ficou de um fechamento anormal. No %TEMP%, junto de milhares de
+    arquivos alheios, isso seria impossivel de fazer com seguranca.
+    """
+    from tfedit import configuracao
+
+    return configuracao.pasta_de_dados() / "rascunhos"
+
+
+def limpar_rascunhos_antigos(dias: int = 7) -> int:
+    """Apaga rascunhos que sobraram de um fechamento anormal.
+
+    So' os ANTIGOS: um rascunho recente pode ser de outra janela aberta agora
+    mesmo -- este editor permite varias instancias quando o canal esta' ocupado.
+    """
+    import time
+
+    pasta = pasta_de_rascunhos()
+    if not pasta.is_dir():
+        return 0
+    limite = time.time() - dias * 86400
+    apagados = 0
+    for arquivo in pasta.glob("*.txt"):
+        try:
+            if arquivo.stat().st_mtime < limite:
+                arquivo.unlink()
+                apagados += 1
+        except OSError:
+            continue          # em uso por outra janela; fica para a proxima
+    if apagados:
+        log.info("%d rascunho(s) antigo(s) removido(s)", apagados)
+    return apagados
+
+
+def criar_rascunho(numero: int) -> pathlib.Path:
+    """Um arquivo VAZIO no disco para um documento novo.
+
+    POR QUE UM ARQUIVO DE VERDADE, e nao um documento so' em memoria:
+
+    A aba inteira e' construida sobre um mmap -- indice de linhas, tabela de
+    pecas, gravacao por streaming, desfazer. Um caminho paralelo "sem arquivo"
+    seria uma segunda implementacao de tudo isso, e as duas iriam divergir na
+    primeira correcao feita so' numa delas.
+
+    Um arquivo vazio custa zero byte e faz o documento novo passar exatamente
+    pelo mesmo codigo de um arquivo de 1 GB. Ja' foi conferido que o `Original`
+    aceita arquivo de tamanho zero.
+    """
+    pasta = pasta_de_rascunhos()
+    pasta.mkdir(parents=True, exist_ok=True)
+    alvo = pasta / f"sem-titulo-{os.getpid()}-{numero}.txt"
+    alvo.write_bytes(b"")
+    return alvo
 
 
 class Aba(QWidget):
@@ -70,13 +133,17 @@ class Aba(QWidget):
     indexou = Signal(int)
 
     def __init__(self, caminho, cfg: dict | None = None,
-                 parent: QWidget | None = None, *, tema=None) -> None:
+                 parent: QWidget | None = None, *, tema=None,
+                 sem_titulo: str = "") -> None:
         super().__init__(parent)
         self.cfg = cfg or {}
         self.caminho = pathlib.Path(caminho)
         self.tema = tema
         self.planilha = None
         self._dialeto = None
+        #: Nome mostrado enquanto o documento nao tem arquivo de verdade.
+        #: Vazio quando a aba veio de um arquivo do usuario.
+        self.sem_titulo = sem_titulo
 
         if self._parece_planilha():
             self._montar_planilha()
@@ -241,7 +308,7 @@ class Aba(QWidget):
 
     @property
     def nome(self) -> str:
-        return self.caminho.name
+        return self.sem_titulo or self.caminho.name
 
     def chave(self) -> str:
         """Identidade para "ja' existe aba deste arquivo?". Ver o cabecalho."""
@@ -266,6 +333,20 @@ class Aba(QWidget):
     @property
     def titulo(self) -> str:
         return ("*" if self.modificado else "") + self.nome
+
+    @property
+    def e_rascunho(self) -> bool:
+        """Documento novo que ainda nao foi salvo em lugar nenhum."""
+        return bool(self.sem_titulo)
+
+    @property
+    def rascunho_intocado(self) -> bool:
+        """Um "Sem titulo" em que ninguem digitou nada.
+
+        E' o que pode ser fechado sem perguntar quando um arquivo de verdade e'
+        aberto -- do contrario o editor acumularia abas vazias.
+        """
+        return self.e_rascunho and not self.modificado
 
     # ==================================================================
     # Indexacao
@@ -298,6 +379,13 @@ class Aba(QWidget):
         levantar -- quem chama e' que sabe como avisar o usuario.
         """
         self.sincronizar()
+        if destino is None and self.e_rascunho:
+            # Um rascunho nao tem para onde salvar: quem chama tem de perguntar
+            # o destino antes. Gravar no arquivo temporario esconderia o texto
+            # numa pasta interna, e o usuario nunca mais o encontraria.
+            raise SemDestino(
+                f"“{self.nome}” ainda não foi salvo em lugar nenhum. "
+                f"Use Salvar como para escolher onde.")
         alvo = pathlib.Path(destino) if destino else self.caminho
         if self.e_planilha:
             return self._salvar_planilha(alvo)
@@ -326,7 +414,15 @@ class Aba(QWidget):
         novo = Original(alvo)
         novo.indexar()
         self.original = novo
+        rascunho_antigo = self.caminho if self.e_rascunho else None
         self.caminho = alvo
+        # Deixou de ser rascunho: o documento tem endereco agora.
+        self.sem_titulo = ""
+        if rascunho_antigo is not None and rascunho_antigo != alvo:
+            try:
+                rascunho_antigo.unlink(missing_ok=True)
+            except OSError:
+                pass          # nao vale falhar uma gravacao bem-sucedida
         self.documento.confirmar_gravacao(novo)
         self.janela.documento = self.documento
         self.editor.recarregar(self.editor.linha_atual_no_documento())
@@ -601,6 +697,13 @@ class Aba(QWidget):
             self.remover_view(nome)
         if self.original is not None:
             self.original.fechar()
+        if self.e_rascunho:
+            # O arquivo temporario morre com a aba. Depois do `fechar()`: no
+            # Windows o mmap SEGURA o arquivo, e apagar antes falharia.
+            try:
+                self.caminho.unlink(missing_ok=True)
+            except OSError:
+                pass
         log.info("fechado %s", self.nome)
 
     # ==================================================================

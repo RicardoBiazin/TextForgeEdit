@@ -26,7 +26,8 @@ from tfedit import (APP, AUTOR, VERSAO, busca, codificacao,
 from tfedit.linguagens import registro as registro_de_linguagens
 from tfedit.gravacao import FalhaNaTroca, SemEspaco
 from tfedit.original import ArquivoMudou
-from tfedit.interface.aba import Aba, NaoEPlanilha
+from tfedit.interface.aba import (Aba, NaoEPlanilha, SemDestino,
+                                 criar_rascunho, limpar_rascunhos_antigos)
 from tfedit.interface.barra_busca import BarraDeBusca
 
 log = log_interno.obter(__name__)
@@ -97,6 +98,11 @@ class JanelaPrincipal(QMainWindow):
         if self.cfg.get("janela_maximizada"):
             self.showMaximized()
         self.setAcceptDrops(True)          # arrastar-e-soltar (ver dropEvent)
+
+        #: Quantos documentos novos esta janela ja' criou. Nao volta a zero
+        #: ao fechar uma aba: dois "Sem título 1" na mesma janela seriam dois
+        #: rascunhos com o mesmo nome, e o usuário não saberia qual é qual.
+        self._contador_de_novos = 0
 
         self.abas = QTabWidget(self)
         self.abas.setTabsClosable(True)
@@ -763,6 +769,7 @@ class JanelaPrincipal(QMainWindow):
             return item
 
         arquivo = self.menuBar().addMenu("&Arquivo")
+        acao("&Novo", QKeySequence.StandardKey.New, self.novo, arquivo)
         acao("&Abrir...", QKeySequence.StandardKey.Open, self.abrir, arquivo)
         acao("&Salvar", QKeySequence.StandardKey.Save, self.salvar, arquivo)
         acao("Salvar &como...", QKeySequence.StandardKey.SaveAs,
@@ -839,6 +846,57 @@ class JanelaPrincipal(QMainWindow):
         for caminho in caminhos:
             self.abrir_arquivo(caminho)
 
+    def _ligar_aba(self, aba) -> None:
+        aba.posicao_mudou.connect(self._mostrar_posicao)
+        aba.titulo_mudou.connect(self._atualizar_titulos)
+        aba.indexando.connect(self._ao_indexar)
+        aba.indexou.connect(self._ao_terminar_indice)
+
+    def novo(self) -> bool:
+        """Um documento em branco, pronto para digitar.
+
+        Ele nasce como um ARQUIVO vazio numa pasta interna -- ver
+        `aba.criar_rascunho`. Assim o documento novo passa exatamente pelo mesmo
+        caminho de um arquivo de 1 GB: mesma tabela de peças, mesmo desfazer,
+        mesma gravação.
+        """
+        self._contador_de_novos += 1
+        nome = f"Sem título {self._contador_de_novos}"
+        try:
+            caminho = criar_rascunho(self._contador_de_novos)
+        except OSError as exc:
+            log.error("nao foi possivel criar o rascunho: %s", exc)
+            QMessageBox.warning(
+                self, "Não foi possível criar o documento",
+                f"Não deu para criar o arquivo de trabalho: {exc}")
+            return False
+
+        aba = Aba(caminho, self.cfg, self, tema=self.tema, sem_titulo=nome)
+        self._ligar_aba(aba)
+        indice = self.abas.addTab(aba, aba.titulo)
+        self.abas.setTabToolTip(
+            indice, "Documento novo — ainda não salvo em disco")
+        self.abas.setCurrentIndex(indice)
+        aba.focar_view_atual()
+        self.barra.showMessage(
+            f"{nome}: digite à vontade. Ctrl+S pergunta onde salvar.", 6000)
+        log.info("documento novo: %s (%s)", nome, caminho)
+        return True
+
+    def _fechar_rascunho_intocado(self) -> None:
+        """Some com o "Sem título" vazio quando um arquivo de verdade chega.
+
+        Sem isto, abrir um arquivo logo depois de iniciar deixaria a aba em
+        branco encostada ali para sempre, e o editor acumularia uma por sessão.
+        Só o INTOCADO sai: um rascunho em que alguém digitou é trabalho.
+        """
+        for aba in list(self.todas_as_abas()):
+            if aba.rascunho_intocado and self.abas.count() > 1:
+                indice = self.abas.indexOf(aba)
+                self.abas.removeTab(indice)
+                aba.encerrar()
+                aba.deleteLater()
+
     def abrir_arquivo(self, caminho: str) -> bool:
         # Uma aba por ARQUIVO: duas abas do mesmo arquivo produziriam duas
         # versoes divergentes, e uma se perderia no primeiro salvamento.
@@ -870,15 +928,15 @@ class JanelaPrincipal(QMainWindow):
             QMessageBox.warning(self, "Não foi possível abrir", str(exc))
             return False
 
-        aba.posicao_mudou.connect(self._mostrar_posicao)
-        aba.titulo_mudou.connect(self._atualizar_titulos)
-        aba.indexando.connect(self._ao_indexar)
-        aba.indexou.connect(self._ao_terminar_indice)
-
+        self._ligar_aba(aba)
         configuracao.registrar_recente(self.cfg, caminho)
         indice = self.abas.addTab(aba, aba.titulo)
         self.abas.setTabToolTip(indice, str(aba.caminho))
         self.abas.setCurrentIndex(indice)
+        # DEPOIS do `addTab`: a guarda de "mais de uma aba" so' faz sentido com
+        # o arquivo novo ja' na janela. Antes disso ha' apenas o rascunho, e
+        # fecha-lo deixaria a janela sem aba nenhuma por um instante.
+        self._fechar_rascunho_intocado()
         if aba.indexando_agora:
             self.progresso.setRange(0, 100)
             self.progresso.setValue(0)
@@ -982,7 +1040,14 @@ class JanelaPrincipal(QMainWindow):
 
     def salvar(self) -> bool:
         aba = self.aba_atual
-        return self._gravar(aba) if aba is not None else False
+        if aba is None:
+            return False
+        if aba.e_rascunho:
+            # Ctrl+S num documento novo PERGUNTA onde salvar, em vez de recusar.
+            # Gravar no arquivo de trabalho esconderia o texto numa pasta
+            # interna, e a pessoa nunca mais o encontraria.
+            return self.salvar_como()
+        return self._gravar(aba)
 
     def salvar_como(self) -> bool:
         aba = self.aba_atual
@@ -991,8 +1056,19 @@ class JanelaPrincipal(QMainWindow):
         if aba.indexando_agora:
             self._avisar_indexando()
             return False
+        # Num rascunho, o diálogo abre na pasta de documentos com um nome
+        # sugerido -- e não na pasta interna onde mora o arquivo de trabalho,
+        # que não é lugar para o usuário salvar nada.
+        if aba.e_rascunho:
+            from PySide6.QtCore import QStandardPaths
+
+            pasta = QStandardPaths.writableLocation(
+                QStandardPaths.StandardLocation.DocumentsLocation) or ""
+            partida = str(pathlib.Path(pasta) / f"{aba.nome}.txt")
+        else:
+            partida = str(aba.caminho)
         caminho, _ = QFileDialog.getSaveFileName(
-            self, "Salvar como", str(aba.caminho), FILTRO)
+            self, "Salvar como", partida, FILTRO)
         if not caminho:
             return False
         if Aba.chave_de(caminho) != aba.chave():
