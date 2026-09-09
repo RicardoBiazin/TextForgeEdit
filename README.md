@@ -163,6 +163,31 @@ de 100 MB o arquivo abre como arquivo comum, onde as garantias de memória do
 editor voltam a valer. Um `.zip` renomeado para `.xlsx` também é recusado — a
 detecção olha o conteúdo.
 
+## Barra de atalhos
+
+Doze botões em quatro grupos — arquivo, edição, busca, visualização —, e a lista
+de quais aparecem fica em `Configurações → Barra de atalhos`. A **ordem salva** é
+a da barra, e marcar ou desmarcar vale na hora.
+
+**Os ícones são desenhados em código, não arquivos de imagem.** Três motivos, e o
+terceiro decide:
+
+- o Qt quase não tem ícone padrão útil para um editor — não há tesoura, lupa nem
+  seta de desfazer em `QStyle.StandardPixmap`, e metade da barra ficaria sem
+  símbolo;
+- um PNG tem **uma** resolução: numa tela 4K a 150% ele borra, e seriam três
+  tamanhos de treze ícones para versionar;
+- **eles seguem o tema.** Um ícone escuro gravado em arquivo desaparece no tema
+  escuro; um claro desaparece no claro. Desenhados, recebem a cor do texto da
+  janela e funcionam nos três temas sem nenhum arquivo a mais.
+
+O teste mede cada ícone reduzido a 16 px e reprova o que ficar com menos de 20
+pixels opacos — é a mesma lição que o ícone do programa ensinou: abaixo disso o
+símbolo não diz mais nada.
+
+Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
+gravado por uma versão mais nova não pode impedir esta de abrir.
+
 ## Configurações
 
 `Arquivo → Configurações` (`Ctrl+,`): tema (escuro, claro, **azul** ou seguir o

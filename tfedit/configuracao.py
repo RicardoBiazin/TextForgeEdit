@@ -92,7 +92,7 @@ def padrao() -> dict[str, Any]:
             "desfazer", "refazer",
             "recortar", "copiar", "colar",
             "localizar", "substituir",
-            "visualizar", "comparar",
+            "visualizar",
         ],
 
         # -- limites (ver os cabeçalhos dos módulos citados) -----------------

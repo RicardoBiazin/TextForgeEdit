@@ -260,6 +260,178 @@ def testar_menu_tem_configuracoes() -> None:
         _encerrar(janela)
 
 
+
+# ======================================================================
+# A barra de atalhos
+# ======================================================================
+
+def testar_icones_legiveis_a_16px() -> None:
+    """A mesma licao que o icone do programa ensinou, agora na barra.
+
+    Um simbolo com traco fino vira uma mancha cinza quando o Qt o reduz para os
+    16 px de uma barra. A conta abaixo nao julga o desenho -- julga se sobrou
+    massa suficiente para ele significar alguma coisa.
+    """
+    secao("*** Todo icone da barra sobrevive a 16 px ***")
+
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QColor
+    from tfedit.interface import icones
+
+    magros = []
+    for chave in icones.CATALOGO:
+        icone = icones.icone(chave, QColor("#d6d8dc"))
+        checa(icone is not None and not icone.isNull(),
+              f"{chave}: o ícone foi desenhado")
+        if icone is None:
+            continue
+        imagem = icone.pixmap(QSize(16, 16)).toImage()
+        opacos = sum(1 for y in range(imagem.height())
+                     for x in range(imagem.width())
+                     if imagem.pixelColor(x, y).alpha() > 40)
+        if opacos < 20:
+            magros.append(f"{chave} ({opacos} px)")
+
+    checa(not magros,
+          "*** nenhum ícone fica com menos de 20 px opacos a 16x16: abaixo "
+          "disso o símbolo não diz mais nada ***"
+          + "".join(f"\n         {m}" for m in magros))
+
+
+def testar_icones_seguem_o_tema() -> None:
+    secao("*** O ícone é desenhado na cor do tema ***")
+
+    from PySide6.QtCore import QSize
+    from PySide6.QtGui import QColor
+    from tfedit.interface import icones
+
+    # Um PNG embutido teria UMA cor: escuro some no tema escuro, claro some no
+    # claro. Desenhado, ele recebe a cor do texto da janela.
+    claro = icones.icone("salvar", QColor("#ffffff")).pixmap(QSize(32, 32))
+    escuro = icones.icone("salvar", QColor("#000000")).pixmap(QSize(32, 32))
+
+    def media(mapa):
+        img = mapa.toImage()
+        pontos = [img.pixelColor(x, y) for y in range(img.height())
+                  for x in range(img.width())
+                  if img.pixelColor(x, y).alpha() > 128]
+        return sum(c.red() for c in pontos) / max(1, len(pontos))
+
+    checa(media(claro) > 200,
+          f"*** pedido em branco, sai claro (média {media(claro):.0f}) ***")
+    checa(media(escuro) < 60,
+          f"*** pedido em preto, sai escuro (média {media(escuro):.0f}) ***")
+
+
+def testar_barra_monta_da_configuracao() -> None:
+    secao("*** A barra é a configuração, e na ordem dela ***")
+
+    janela = _janela()
+    try:
+        barra = janela.barra_atalhos
+        acoes = [a for a in barra.actions() if not a.isSeparator()]
+        checa(len(acoes) >= 10, f"a barra tem {len(acoes)} botões")
+        checa(all(not a.icon().isNull() for a in acoes),
+              "todos com ícone")
+        checa(all(a.toolTip() for a in acoes),
+              "*** e todos com dica: um ícone sem dica é um enigma ***")
+        checa(any(a.isSeparator() for a in barra.actions()),
+              "*** com separadores entre os grupos: treze botões seguidos "
+              "viram uma fileira indistinta ***")
+
+        # A ORDEM é a da configuração, e não a de um catálogo interno.
+        antes = dict(janela.cfg)
+        janela.cfg = {**janela.cfg,
+                      "botoes_da_barra": ["salvar", "novo", "formatar"]}
+        janela.aplicar_configuracao(antes)
+        acoes = [a.text() for a in janela.barra_atalhos.actions()
+                 if not a.isSeparator()]
+        checa_igual(acoes, ["Salvar", "Novo", "Formatar documento"],
+                    "*** a barra respeita a ordem salva, inclusive fora da "
+                    "ordem do catálogo ***")
+    finally:
+        _encerrar(janela)
+
+
+def testar_barra_pode_sumir() -> None:
+    secao("A barra pode ser escondida")
+
+    janela = _janela()
+    try:
+        antes = dict(janela.cfg)
+        janela.cfg = {**janela.cfg, "mostrar_barra": False}
+        janela.aplicar_configuracao(antes)
+        checa(janela.barra_atalhos.isHidden(), "escondida quando desmarcada")
+
+        antes = dict(janela.cfg)
+        janela.cfg = {**janela.cfg, "mostrar_barra": True}
+        janela.aplicar_configuracao(antes)
+        checa(not janela.barra_atalhos.isHidden(), "e volta quando marcada")
+
+        # Marcada mas sem botão nenhum: some também, senão fica uma faixa
+        # cinza ocupando espaço sem oferecer nada.
+        antes = dict(janela.cfg)
+        janela.cfg = {**janela.cfg, "botoes_da_barra": []}
+        janela.aplicar_configuracao(antes)
+        checa(janela.barra_atalhos.isHidden(),
+              "*** sem botão nenhum ela some, em vez de virar uma faixa "
+              "vazia ***")
+    finally:
+        _encerrar(janela)
+
+
+def testar_chave_desconhecida_nao_derruba() -> None:
+    secao("*** Um botão que não existe é ignorado, e não quebra ***")
+
+    janela = _janela()
+    try:
+        # Uma configuração gravada por uma versão MAIS NOVA chega assim. Ela
+        # não pode impedir esta versão de abrir.
+        antes = dict(janela.cfg)
+        janela.cfg = {**janela.cfg,
+                      "botoes_da_barra": ["novo", "teletransporte", "salvar"]}
+        janela.aplicar_configuracao(antes)
+        acoes = [a.text() for a in janela.barra_atalhos.actions()
+                 if not a.isSeparator()]
+        checa_igual(acoes, ["Novo", "Salvar"],
+                    "*** a chave desconhecida sai e o resto continua ***")
+    finally:
+        _encerrar(janela)
+
+
+def testar_botoes_oferecidos_tem_tudo() -> None:
+    secao("A tela de Configurações lista o que a barra sabe fazer")
+
+    from tfedit.interface import icones
+
+    janela = _janela()
+    try:
+        oferecidos = dict(janela.botoes_da_barra())
+        checa(len(oferecidos) >= 12,
+              f"{len(oferecidos)} botões oferecidos")
+        for chave in oferecidos:
+            checa(chave in icones.CATALOGO,
+                  f"{chave} tem ícone no catálogo")
+
+        # `comparar` tem icone mas AINDA nao tem comando: nao pode aparecer na
+        # tela, senao vira a "opcao que finge existir" que esta suite combate.
+        checa("comparar" in icones.CATALOGO,
+              "o ícone de comparar já existe")
+        checa("comparar" not in oferecidos,
+              "*** mas ele NÃO é oferecido enquanto o comando não existe: um "
+              "botão que abre 'não implementado' é opção que finge existir ***")
+
+        # E o padrão de fábrica só cita botões que existem.
+        from tfedit import configuracao
+        padrao = configuracao.padrao()["botoes_da_barra"]
+        desconhecidos = [c for c in padrao if c not in oferecidos]
+        checa(not desconhecidos,
+              f"*** e o padrão de fábrica só cita botões reais: "
+              f"{desconhecidos or 'nenhum sobrando'} ***")
+    finally:
+        _encerrar(janela)
+
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -276,6 +448,12 @@ def main() -> int:
     testar_tema_vale_na_hora()
     testar_numero_de_linha_vale_na_hora()
     testar_menu_tem_configuracoes()
+    testar_icones_legiveis_a_16px()
+    testar_icones_seguem_o_tema()
+    testar_barra_monta_da_configuracao()
+    testar_barra_pode_sumir()
+    testar_chave_desconhecida_nao_derruba()
+    testar_botoes_oferecidos_tem_tudo()
     return resumir()
 
 

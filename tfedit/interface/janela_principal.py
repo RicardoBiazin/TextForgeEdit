@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pathlib
 
-from PySide6.QtCore import QPoint, Qt, Signal
-from PySide6.QtGui import (QAction, QActionGroup, QKeySequence,
+from PySide6.QtCore import QPoint, QSize, Qt, Signal
+from PySide6.QtGui import (QAction, QActionGroup, QIcon, QKeySequence,
                            QTextCursor)
 from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel,
                                QMainWindow, QMenu, QMessageBox,
@@ -28,6 +28,7 @@ from tfedit.gravacao import FalhaNaTroca, SemEspaco
 from tfedit.original import ArquivoMudou
 from tfedit.interface.aba import (Aba, NaoEPlanilha, SemDestino,
                                  criar_rascunho, limpar_rascunhos_antigos)
+from tfedit.interface import icones
 from tfedit.interface.barra_busca import BarraDeBusca
 
 log = log_interno.obter(__name__)
@@ -137,6 +138,7 @@ class JanelaPrincipal(QMainWindow):
         self.setCentralWidget(central)
 
         self._montar_menu()
+        self._montar_barra_de_atalhos()
 
         self.barra = QStatusBar(self)
         self.setStatusBar(self.barra)
@@ -195,12 +197,83 @@ class JanelaPrincipal(QMainWindow):
         self.aplicar_configuracao(antes)
 
     def botoes_da_barra(self) -> tuple:
-        """(chave, rótulo) dos botões que a barra de atalhos oferece.
+        """(chave, rótulo) de tudo o que a barra pode mostrar.
 
-        Vazio enquanto a barra não existe -- e é o que faz a aba dela sumir da
-        tela de Configurações em vez de mostrar uma lista vazia.
+        É o que a tela de Configurações lista para marcar e desmarcar. Sai do
+        catálogo dos ícones e da tabela de comandos abaixo, e não de uma lista
+        escrita à mão: um botão novo aparece na tela sozinho.
         """
-        return ()
+        return tuple((chave, icones.CATALOGO[chave][0])
+                     for chave in self._comandos_da_barra()
+                     if chave in icones.CATALOGO)
+
+    def _comandos_da_barra(self) -> dict:
+        """chave -> (o que fazer, dica). A ORDEM aqui é a da tela.
+
+        `comparar` NÃO está aqui ainda: um botão que abre "não implementado"
+        é a mesma "opção que finge existir" que a tela de Configurações existe
+        para acabar. Ele entra quando a comparação entrar.
+        """
+        return {
+            "novo": (self.novo, "Novo documento (Ctrl+N)"),
+            "abrir": (self.abrir, "Abrir arquivo (Ctrl+O)"),
+            "salvar": (self.salvar, "Salvar (Ctrl+S)"),
+            "salvar_tudo": (self.salvar_tudo, "Salvar tudo (Ctrl+Shift+S)"),
+            "desfazer": (lambda: self._no_editor("undo"), "Desfazer (Ctrl+Z)"),
+            "refazer": (lambda: self._no_editor("redo"), "Refazer (Ctrl+Y)"),
+            "recortar": (lambda: self._no_editor("cut"), "Recortar (Ctrl+X)"),
+            "copiar": (lambda: self._no_editor("copy"), "Copiar (Ctrl+C)"),
+            "colar": (lambda: self._no_editor("paste"), "Colar (Ctrl+V)"),
+            "localizar": (self.abrir_busca, "Localizar (Ctrl+F)"),
+            "substituir": (self.abrir_substituir, "Substituir (Ctrl+H)"),
+            "visualizar": (self._menu_no_rodape_view,
+                           "Trocar a visualização"),
+            "formatar": (self.formatar_documento,
+                         "Formatar documento (Shift+Alt+F)"),
+        }
+
+    def _montar_barra_de_atalhos(self) -> None:
+        """Constrói a barra a partir da configuração, na ORDEM salva.
+
+        Refeita do zero a cada chamada -- é o que faz a personalização valer na
+        hora, sem reiniciar. Uma chave desconhecida é ignorada em silêncio: uma
+        configuração de uma versão futura não pode impedir o programa de abrir.
+        """
+        from PySide6.QtWidgets import QToolBar
+
+        barra = getattr(self, "barra_atalhos", None)
+        if barra is None:
+            barra = QToolBar("Atalhos", self)
+            barra.setObjectName("barra_atalhos")
+            barra.setMovable(False)
+            barra.setIconSize(QSize(20, 20))
+            self.addToolBar(barra)
+            self.barra_atalhos = barra
+        barra.clear()
+
+        comandos = self._comandos_da_barra()
+        cor = self.tema.cor("janela.texto")
+        # Os separadores marcam os GRUPOS: arquivo, edição, busca, views. Sem
+        # eles treze botões viram uma fileira indistinta.
+        grupos = {"desfazer", "recortar", "localizar", "visualizar"}
+
+        escolhidos = [c for c in self.cfg.get("botoes_da_barra", ())
+                      if c in comandos]
+        primeiro = True
+        for chave in escolhidos:
+            tratador, dica = comandos[chave]
+            if chave in grupos and not primeiro:
+                barra.addSeparator()
+            acao = QAction(icones.icone(chave, cor) or QIcon(),
+                           icones.CATALOGO[chave][0], self)
+            acao.setToolTip(dica)
+            acao.setStatusTip(dica)
+            acao.triggered.connect(tratador)
+            barra.addAction(acao)
+            primeiro = False
+
+        barra.setVisible(bool(escolhidos)
+                         and bool(self.cfg.get("mostrar_barra", True)))
 
     def aplicar_configuracao(self, antes: dict) -> None:
         """Faz valer AGORA o que a tela mudou.
@@ -226,6 +299,9 @@ class JanelaPrincipal(QMainWindow):
             if aba.editor is not None:
                 aba.editor.aplicar_configuracao(self.cfg)
 
+        # A barra e' refeita do zero: a personalizacao vale na hora, e o
+        # tema novo repinta os icones.
+        self._montar_barra_de_atalhos()
         self.barra.showMessage("Preferências salvas.", 5000)
         log.info("configuracao aplicada: tema=%s, numero de linha=%s",
                  self.cfg.get("tema"), self.cfg.get("mostrar_numero_de_linha"))
