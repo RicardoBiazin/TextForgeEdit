@@ -572,6 +572,34 @@ class Aba(QWidget):
         self._dialeto = dialeto
         return dialeto
 
+    def amostra_de_texto(self, linhas: int = 200) -> str:
+        """As primeiras linhas decodificadas. `""` quando nao da' para ler.
+
+        E' a MESMA amostra que `dialeto_csv` usa. Existe separada porque a tela
+        de escolha do separador precisa dela para desenhar a previa, e ler o
+        documento de dentro de um dialogo colocaria a interface conversando
+        com a tabela de pecas por um caminho novo.
+        """
+        if self.documento is None:
+            return ""
+        try:
+            cruas = self.documento.faixa(0, linhas)
+        except Exception:                     # noqa: BLE001 - nunca derrubar
+            return ""
+        return b"\n".join(cruas).decode(self.perfil.codec, errors="replace")
+
+    def impor_dialeto(self, dialeto) -> None:
+        """Manda usar ESTE dialeto, em vez do detectado.
+
+        Descarta a grade existente de proposito: o `ModeloCsv` guarda o dialeto
+        no construtor e mantem um cache de blocos ja' repartidos com ele.
+        Trocar o atributo na grade viva deixaria as linhas em cache repartidas
+        pelo separador ANTIGO, misturadas com as novas -- e nada na tela diria
+        que metade dos dados esta' errada.
+        """
+        self._dialeto = dialeto
+        self.remover_view("tabela")
+
     def _descartar_views_de_texto(self) -> None:
         """Views cuja leitura depende do PERFIL de codificacao.
 

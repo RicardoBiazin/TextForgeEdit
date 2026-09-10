@@ -46,7 +46,29 @@ log = log_interno.obter(__name__)
 
 #: Na ordem de utilidade nesta maquina: ";" primeiro porque e' o separador do
 #: CSV brasileiro (o Excel em pt-BR usa ";" porque a virgula e' o decimal).
-CANDIDATOS = (";", ",", "\t", "|", ":")
+#:
+#: A ORDEM E' O DESEMPATE. `detectar` compara com `>` estrito, entao quem vem
+#: antes ganha quando as notas empatam -- por isso os tres ultimos foram
+#: ACRESCENTADOS NO FIM, e nao intercalados: eles sao separadores de verdade em
+#: exports de sistemas legados (o "~" e o "^" aparecem em EDI e em extracoes de
+#: mainframe justamente por quase nunca ocorrerem dentro do dado), mas sao
+#: raros o bastante para nao merecerem ganhar um empate de ";" ou ",".
+CANDIDATOS = (";", ",", "\t", "|", ":", "~", "^", "#")
+
+#: O nome de cada separador em portugues. Fica AQUI, e nao na tela de escolha,
+#: porque a mesma lista alimenta o rotulo do rodape e a caixa de selecao: duas
+#: copias sairiam de sincronia no primeiro separador novo.
+ROTULO_DO_DELIMITADOR = {
+    ";": "ponto e vírgula",
+    ",": "vírgula",
+    "\t": "TAB",
+    "|": "barra vertical",
+    ":": "dois-pontos",
+    "~": "til",
+    "^": "circunflexo",
+    "#": "cerquilha",
+    " ": "espaço",
+}
 
 #: Quantas linhas olhar para decidir. Mais que isto nao melhora e custa.
 LINHAS_DE_AMOSTRA = 50
@@ -66,9 +88,8 @@ class Dialeto:
 
     @property
     def rotulo_do_delimitador(self) -> str:
-        return {";": "ponto e vírgula", ",": "vírgula", "\t": "TAB",
-                "|": "barra vertical", ":": "dois-pontos"}.get(
-                    self.delimitador, repr(self.delimitador))
+        return ROTULO_DO_DELIMITADOR.get(self.delimitador,
+                                         f"{self.delimitador!r}")
 
     def descrever(self) -> str:
         cabecalho = "com cabeçalho" if self.tem_cabecalho else "sem cabeçalho"
@@ -281,6 +302,47 @@ def chave_de_ordenacao(campo: str, dialeto: Dialeto) -> float | str:
         # "1.2.3" e afins: e' texto com cara de numero. Ordenar como texto e'
         # melhor que descartar a linha.
         return campo
+
+
+def com_delimitador(texto: str, delimitador: str,
+                    aspas: str = '"') -> Dialeto:
+    """O dialeto de quem ESCOLHEU o separador, em vez de deixar adivinhar.
+
+    A deteccao automatica erra em casos legitimos -- um arquivo de uma coluna
+    so', um separador que nao esta' nos CANDIDATOS, um export onde o dado
+    contem o proprio separador candidato. Sem esta porta de saida, o usuario
+    ve "nao foi possivel reconhecer um separador" e o assunto acaba ali.
+
+    A confianca nao e' 100 por educacao: ela e' 100 porque nao ha' o que
+    duvidar. Quem escolheu sabe qual e' o separador do proprio arquivo -- a
+    unica coisa que este modulo tem a fazer e' contar as colunas e obedecer.
+    """
+    if len(delimitador) != 1:
+        raise ValueError("o separador é um único caractere")
+    if delimitador in (aspas, "\n", "\r"):
+        # Um separador igual a' aspa faria `csv.reader` tratar todo campo como
+        # citado; "\n" faria cada campo virar uma linha. Nao ha' como honrar.
+        raise ValueError(f"{delimitador!r} não pode ser separador")
+
+    linhas = _linhas_de_amostra(texto)
+    if not linhas:
+        return Dialeto(delimitador=delimitador, aspas=aspas,
+                       tem_cabecalho=False, colunas=0, confianca=100,
+                       como_decidiu="separador escolhido; arquivo vazio")
+
+    # O MESMO caminho de `detectar` daí para baixo: parte de um dialeto
+    # parcial, reparte os registros com ele e conta as colunas de verdade.
+    # Contar delimitadores direto na linha erraria em todo campo entre aspas
+    # que contenha o separador.
+    parcial = Dialeto(delimitador=delimitador, aspas=aspas,
+                      tem_cabecalho=False, colunas=0, confianca=100)
+    registros = [campos_de(l, parcial) for l in linhas[:10]]
+    registros = [r for r in registros if r and any(c.strip() for c in r)]
+    colunas = max((len(r) for r in registros), default=1)
+    return Dialeto(delimitador=delimitador, aspas=aspas,
+                   tem_cabecalho=_tem_cabecalho(registros), colunas=colunas,
+                   confianca=100,
+                   como_decidiu="separador escolhido por você")
 
 
 def detectar(texto: str, aspas: str = '"') -> Dialeto:

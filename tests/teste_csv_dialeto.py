@@ -1,6 +1,6 @@
 """Deteccao de dialeto de CSV, sem Qt.
 
-    .\\.venv\\Scripts\\python.exe tests\\teste_csv_dialeto.py
+    .\\.venv\\Scripts\\python.exe tests\\teste_cd.py
 
 O teste que importa e' `testar_csv_brasileiro`, e ele tem CONTRAPROVA: o mesmo
 arquivo tem mais virgulas que ponto e virgulas. Se alguem trocar a pontuacao
@@ -16,7 +16,8 @@ from __future__ import annotations
 
 import sys
 
-from ajudantes import checa, checa_igual, resumir, secao
+from ajudantes import (checa, checa_igual, checa_levanta, resumir,
+                       secao)
 
 from tfedit import csv_dialeto as cd
 
@@ -216,6 +217,121 @@ def testar_registro_malformado_nao_perde_a_linha() -> None:
           f"e o conteúdo continua visível: {campos}")
 
 
+
+def testar_separadores_de_sistemas_legados() -> None:
+    """`~`, `^` e `#` sao separadores de verdade, e nao eram considerados.
+
+    Os dois primeiros aparecem em EDI e em extracao de mainframe JUSTAMENTE
+    por quase nunca ocorrerem dentro do dado -- e' a mesma razao pela qual sao
+    bons separadores e pela qual ninguem pensa neles.
+    """
+    secao("*** Separadores de sistemas legados: ~ ^ # ***")
+
+    for sep, nome in (("~", "til"), ("^", "circunflexo"), ("#", "cerquilha")):
+        texto = (f"nome{sep}valor{sep}data\n"
+                 f"Ana{sep}1234{sep}01/02/2026\n"
+                 f"Bruno{sep}99{sep}03/02/2026\n"
+                 f"Carla{sep}7000{sep}05/02/2026\n")
+        d = cd.detectar(texto)
+        checa_igual(d.delimitador, sep, f"{nome}: reconhecido como separador")
+        checa_igual(d.colunas, 3, f"{nome}: tres colunas")
+
+    # A CONTRAPROVA. Acrescentar candidatos aumenta a chance de o detector ver
+    # tabela onde nao ha' -- e um texto em portugues tem til em toda outra
+    # palavra. Se este teste falhar, os candidatos novos custaram mais do que
+    # renderam.
+    prosa = ("Nao ha' irmao que sustente a manha de amanha, e a licao\n"
+             "que a criacao nos da' e' a de que a razao tambem tem coracao.\n"
+             "Sao tantas as ocasioes que a mao nao alcanca a solucao.\n"
+             "A construcao da cancao e' a mesma da oracao: repeticao.\n")
+    d = cd.detectar(prosa)
+    checa(d.colunas < 2 or d.confianca < 50,
+          f"*** e prosa cheia de til NAO vira tabela: {d.delimitador!r}, "
+          f"{d.colunas} coluna(s), confianca {d.confianca} ***")
+
+
+def testar_separador_escolhido_a_mao() -> None:
+    """`com_delimitador` obedece, e a deteccao nao tem voto.
+
+    Sem esta porta de saida o programa dizia "nao foi possivel reconhecer um
+    separador" e o assunto acabava ali -- inclusive quando a pessoa sabia
+    exatamente qual era o separador do proprio arquivo.
+    """
+    secao("*** O separador escolhido a' mao ***")
+
+    # O caso MEDIDO em que a deteccao nao entrega: colunas separadas por
+    # espaco. O espaco esta' fora dos CANDIDATOS de proposito -- se estivesse
+    # la', toda prosa em portugues viraria uma tabela de dez colunas. A
+    # deteccao esta' certa em recusar, e a escolha manual e' o unico caminho.
+    #
+    # (A primeira versao deste teste usava um log com horarios, supondo que os
+    # dois-pontos ganhariam do ";". Medido: nao ganham -- o desempate por
+    # PRESENCA ja' resolve. O caso do espaco e' real.)
+    espaco = ("Ana    1234 SC\n"
+              "Bruno  99   PR\n"
+              "Carla  7000 RS\n"
+              "Daniel 55   MG\n")
+    automatico = cd.detectar(espaco)
+    checa(automatico.colunas < 2 or automatico.confianca < 50,
+          f"*** a deteccao RECUSA um arquivo separado por espaco "
+          f"({automatico.delimitador!r}, {automatico.colunas} coluna(s), "
+          f"confianca {automatico.confianca}) ***")
+    escolhido = cd.com_delimitador(espaco, " ")
+    checa_igual(escolhido.delimitador, " ", "obedece ao que foi escolhido")
+    checa(escolhido.colunas >= 3,
+          f"*** e escolhido a' mao ele abre, com {escolhido.colunas} "
+          f"colunas: e' por isto que a escolha manual existe ***")
+    checa_igual(escolhido.confianca, 100, "sem duvida: quem escolheu sabe")
+
+    # E obedece mesmo quando a deteccao tinha um palpite bom e DIFERENTE.
+    log = ("10:00:01;INFO;servidor iniciado\n"
+           "10:00:05;WARN;cache frio\n"
+           "10:01:00;INFO;42 requisicoes\n"
+           "10:02:11;ERRO;tempo esgotado\n")
+    checa_igual(cd.detectar(log).delimitador, ";",
+                "a deteccao sozinha escolhe o ';' neste log")
+    checa_igual(cd.com_delimitador(log, ":").delimitador, ":",
+                "*** e a escolha manual nao e' uma sugestao: ela manda ***")
+
+    # Um separador que nao esta' nos CANDIDATOS e nunca estara'.
+    unidade = "\x1f"
+    exotico = (f"a{unidade}b{unidade}c\n1{unidade}2{unidade}3\n"
+               f"4{unidade}5{unidade}6\n")
+    d = cd.com_delimitador(exotico, unidade)
+    checa_igual(d.colunas, 3,
+                "*** ate' o separador de unidade do ASCII serve, escolhido "
+                "a' mao ***")
+
+    # Campo entre aspas contendo o separador: contar o caractere na linha
+    # crua daria uma coluna a mais.
+    citado = 'nome;cidade;uf\nAna;"Sao Jose;SC";SC\nBruno;Blumenau;SC\n'
+    d = cd.com_delimitador(citado, ";")
+    checa_igual(d.colunas, 3,
+                "*** o ';' DENTRO das aspas nao vira coluna: `com_delimitador` "
+                "reparte de verdade, nao conta caracteres ***")
+
+    # O que nao da' para honrar recusa, em vez de abrir uma grade errada.
+    checa_levanta(ValueError, lambda: cd.com_delimitador(citado, '"'),
+                  "aspa como separador e' recusada")
+    checa_levanta(ValueError, lambda: cd.com_delimitador(citado, "\n"),
+                  "quebra de linha tambem")
+    checa_levanta(ValueError, lambda: cd.com_delimitador(citado, ";;"),
+                  "e o separador e' UM caractere")
+
+
+def testar_rotulos_cobrem_todo_candidato() -> None:
+    secao("*** Todo separador oferecido tem nome em portugues ***")
+
+    for candidato in cd.CANDIDATOS:
+        checa(candidato in cd.ROTULO_DO_DELIMITADOR,
+              f"{candidato!r} tem rotulo: "
+              f"{cd.ROTULO_DO_DELIMITADOR.get(candidato)}")
+    # A tela de escolha oferece os mesmos, mais o espaco.
+    from tfedit.interface import separador as tela
+    for oferecido in tela.OFERECIDOS:
+        checa(oferecido in cd.ROTULO_DO_DELIMITADOR,
+              f"*** a caixa de selecao nao mostra {oferecido!r} sem nome ***")
+
 def main() -> int:
     testar_csv_brasileiro()
     testar_desempate_pelo_cabecalho()
@@ -227,6 +343,9 @@ def main() -> int:
     testar_linha_suspeita()
     testar_chave_de_ordenacao()
     testar_registro_malformado_nao_perde_a_linha()
+    testar_separadores_de_sistemas_legados()
+    testar_separador_escolhido_a_mao()
+    testar_rotulos_cobrem_todo_candidato()
     return resumir()
 
 

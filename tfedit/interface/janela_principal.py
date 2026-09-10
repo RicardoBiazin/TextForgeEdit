@@ -12,7 +12,7 @@ import pathlib
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import (QAction, QActionGroup, QIcon, QKeySequence,
                            QTextCursor)
-from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel,
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QLabel,
                                QMainWindow, QMenu, QMessageBox,
                                QProgressBar, QStatusBar, QTabWidget,
                                QVBoxLayout, QWidget)
@@ -63,8 +63,12 @@ SO_LEITURA_NA_VIEW = {"copy": "copiar"}
 EDICAO_NA_VIEW = {"undo": "desfazer", "redo": "refazer"}
 
 #: Como cada view se chama para o usuario.
+#: O nome INTERNO da view de CSV e' "tabela"; o que aparece na tela e'
+#: "Colunas". Nao e' capricho: "Tabela" descreve o que a view E', e "Colunas"
+#: descreve o que ela RESOLVE -- e o problema com que a pessoa chega e' "os
+#: dados estao todos grudados numa linha so'".
 ROTULO_DA_VIEW = {"texto": "Texto", "hex": "Hexadecimal",
-                  "tabela": "Tabela", "planilha": "Planilha"}
+                  "tabela": "Colunas", "planilha": "Planilha"}
 
 
 class _RotuloClicavel(QLabel):
@@ -636,6 +640,49 @@ class JanelaPrincipal(QMainWindow):
             acao.triggered.connect(
                 lambda _c=False, n=nome: self._trocar_view(n))
             grupo.addAction(acao)
+
+        # A escolha manual do separador fica FORA do grupo: ela nao e' uma
+        # quarta visualizacao, e' a mesma tabela com outro corte. Aparece
+        # mesmo quando "Tabela" nao aparece -- o caso em que ela mais serve e'
+        # justamente aquele em que a deteccao nao reconheceu nada.
+        if not aba.e_planilha and aba.documento is not None:
+            menu.addSeparator()
+            escolher = menu.addAction("Colunas com outro separador…")
+            escolher.setEnabled(not aba.indexando_agora)
+            if aba.indexando_agora:
+                escolher.setToolTip(
+                    "Disponível quando a varredura do arquivo terminar.")
+            escolher.triggered.connect(
+                lambda _c=False: self.escolher_separador())
+
+    def escolher_separador(self) -> None:
+        """Abre a tela de escolha do separador e mostra a tabela com ele."""
+        from tfedit.interface.separador import EscolherSeparador
+
+        aba = self.aba_atual
+        if aba is None or aba.e_planilha or aba.documento is None:
+            return
+        amostra = aba.amostra_de_texto()
+        if not amostra.strip():
+            self.barra.showMessage("O arquivo está vazio.", 6000)
+            return
+
+        detectado = aba.dialeto_csv()
+        dialogo = EscolherSeparador(
+            amostra, self,
+            sugerido=detectado.delimitador if detectado is not None else None)
+        if dialogo.exec() != QDialog.DialogCode.Accepted:
+            return
+        escolhido = dialogo.dialeto_escolhido
+        if escolhido is None:
+            return
+
+        aba.impor_dialeto(escolhido)
+        if not self._montar_view(aba, "tabela"):
+            return
+        aba.trocar_para("tabela")
+        self._atualizar_rotulo_view()
+        self._mostrar_posicao(aba.linha_atual(), 0)
 
     def _pode_abrir_view(self, aba, nome: str) -> bool:
         """A view existe nesta compilação e serve para este arquivo?
@@ -1284,9 +1331,36 @@ class JanelaPrincipal(QMainWindow):
             return
         self.progresso.setVisible(aba.indexando_agora)
         mb = aba.original.tamanho / (1024 * 1024)
-        self.barra.showMessage(
-            f"{aba.nome}: {mb:,.1f} MB, {total_de_linhas:,} linhas. "
-            f"O arquivo continua no disco.".replace(",", "."), 8000)
+        recado = (f"{aba.nome}: {mb:,.1f} MB, {total_de_linhas:,} linhas. "
+                  f"O arquivo continua no disco.".replace(",", "."))
+        self.barra.showMessage(recado + self._sugestao_de_tabela(aba), 12000)
+
+    def _sugestao_de_tabela(self, aba) -> str:
+        """"  Este arquivo tem colunas: ..." -- ou nada.
+
+        A grade de colunas existe desde a v0.7.0 e ficou INVISIVEL: ela so'
+        aparece dentro do menu Visualizar, que ninguem abre num arquivo de
+        texto, e o `visualizador_preferido()` das linguagens era calculado e
+        jogado fora -- `Aba.visualizador_sugerido` nao tinha um unico leitor.
+        Um recurso que a pessoa nao sabe que existe nao esta' entregue.
+
+        E' uma frase no rodape, e nao um dialogo: abrir a grade sozinho mudaria
+        a tela de baixo do usuario num arquivo que ele pediu para ler, e um
+        modal a cada CSV aberto vira algo a fechar sem ler. A frase aparece uma
+        VEZ por aba (`_ja_sugeri`), porque a segunda vez ja' e' cobranca.
+        """
+        if aba.e_planilha or aba.documento is None:
+            return ""
+        if getattr(aba, "_ja_sugeri_tabela", False):
+            return ""
+        if aba.view_atual() != "texto":
+            return ""
+        dialeto = aba.dialeto_csv()
+        if dialeto is None or dialeto.colunas < 2:
+            return ""
+        aba._ja_sugeri_tabela = True
+        return (f"  ·  Parece uma tabela ({dialeto.descrever()}): "
+                f"Visualizar → Colunas.")
 
     # ==================================================================
     # Gravar

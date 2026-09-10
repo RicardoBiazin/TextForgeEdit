@@ -224,6 +224,46 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Ver um CSV/DSV em colunas
+
+Um arquivo separado por `;`, `|`, TAB ou outro caractere é ilegível como texto
+corrido. `Visualizar → Colunas` mostra o mesmo arquivo repartido numa grade,
+**sem carregá-lo na memória**: a grade lê da tabela de peças sob demanda, e
+editar uma célula troca só os bytes daquele campo.
+
+O separador é reconhecido pela **consistência entre as linhas**, não pela
+frequência do caractere. É o que faz um CSV brasileiro (`;` separando colunas,
+`,` como decimal) abrir com as colunas certas: a vírgula é frequente, mas só o
+`;` aparece em *todas* as linhas, cabeçalho incluído.
+
+### Quando o reconhecimento não basta
+
+`Visualizar → Colunas com outro separador…` deixa escolher o caractere à mão,
+com **prévia ao vivo**: as primeiras linhas já aparecem repartidas enquanto se
+escolhe, então dá para ver que o separador está errado sem abrir a grade.
+
+Aceita `;` `,` TAB `|` `:` `~` `^` `#` espaço, ou qualquer caractere digitado --
+inclusive `\x1f`, o separador de unidade do ASCII, que alguns sistemas usam
+justamente por nunca ocorrer no dado.
+
+O caso que motiva a tela é o arquivo separado por **espaço**: o espaço está fora
+dos candidatos automáticos de propósito, porque com ele na lista toda prosa em
+português viraria uma tabela de dez colunas. A detecção acerta em recusar, e a
+escolha manual é o único caminho.
+
+Trocar o separador **refaz a grade** em vez de remendá-la: o modelo guarda o
+dialeto e mantém um cache de linhas já repartidas: trocar o atributo na grade
+viva deixaria metade dos dados repartida pelo separador antigo, sem nada na tela
+dizendo isso.
+
+### E o aviso no rodapé
+
+A grade existia desde a v0.7.0 e estava **invisível** -- só dentro do menu
+`Visualizar`, que ninguém abre num arquivo de texto. Ao terminar a varredura, um
+CSV agora avisa no rodapé que dá para vê-lo em colunas, dizendo qual separador
+foi reconhecido. Uma vez por aba, e sem abrir nada sozinho: a segunda vez já
+seria cobrança, e trocar a tela de baixo de quem só pediu para ler seria pior.
+
 ## Números de linha
 
 `Configurações → Editor → Número de linha`, com três estados:

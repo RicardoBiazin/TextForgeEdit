@@ -30,10 +30,19 @@ from ajudantes import (checa, checa_igual, drenar_eventos, pasta_temporaria,
 
 TEM_QT = preparar_qt()
 
+#: O rotulo da grade de CSV como ele aparece no menu, tirado da CONSTANTE.
+#: Escrito a' mao, este teste ja' quebrou uma vez por o rotulo ter mudado de
+#: "Tabela" para "Colunas" -- uma falha sobre a palavra, e nao sobre o
+#: comportamento, que e' o que ele existe para vigiar.
+GRADE = "Colunas"
+if TEM_QT:
+    from tfedit.interface.janela_principal import ROTULO_DA_VIEW
+    GRADE = ROTULO_DA_VIEW["tabela"]
+    from PySide6.QtWidgets import QDialogButtonBox
+
 
 def _janela_com(pasta, nome: str, dados: bytes):
     from tfedit.interface.janela_principal import JanelaPrincipal
-
     alvo = pasta / nome
     alvo.write_bytes(dados)
     janela = JanelaPrincipal({})
@@ -98,7 +107,7 @@ def testar_menu_de_views() -> None:
             rotulos = [a.text() for a in menu.actions()]
             checa("Texto" in rotulos and "Hexadecimal" in rotulos,
                   f"lista o que da' para abrir: {rotulos}")
-            checa("Tabela" not in rotulos and "Planilha" not in rotulos,
+            checa(GRADE not in rotulos and "Planilha" not in rotulos,
                   "*** e NAO lista o que ainda nao abre: uma entrada que nao "
                   "faz nada e' pior que uma ausente ***")
             marcadas = [a.text() for a in menu.actions() if a.isChecked()]
@@ -614,8 +623,8 @@ def testar_menu_oferece_a_tabela() -> None:
             menu = QMenu()
             janela._preencher_view(menu)
             rotulos = [a.text() for a in menu.actions()]
-            checa("Tabela" in rotulos,
-                  f"*** num CSV a Tabela aparece: {rotulos} ***")
+            checa(GRADE in rotulos,
+                  f"*** num CSV a grade de colunas aparece: {rotulos} ***")
         finally:
             _encerrar(janela)
 
@@ -626,7 +635,7 @@ def testar_menu_oferece_a_tabela() -> None:
             menu = QMenu()
             janela._preencher_view(menu)
             rotulos = [a.text() for a in menu.actions()]
-            checa("Tabela" not in rotulos,
+            checa(GRADE not in rotulos,
                   f"*** e num texto corrido, nao: {rotulos} ***")
         finally:
             _encerrar(janela)
@@ -721,6 +730,193 @@ def testar_desfazer_sem_nada_explica() -> None:
             _encerrar(janela)
 
 
+
+def testar_tela_do_separador_mostra_a_previa() -> None:
+    """A previa e' o que faz a tela de escolha valer.
+
+    Escolher o separador as cegas e so' descobrir o resultado depois de a grade
+    abrir transformaria a correcao de um palpite errado em tentativa e erro --
+    com o agravante de que a grade de um arquivo grande custa a montar.
+    """
+    secao("*** A tela de escolha do separador mostra a previa ***")
+
+    from PySide6.QtWidgets import QDialogButtonBox
+
+    from tfedit.interface.separador import EscolherSeparador
+
+    amostra = ("nome~cidade~uf\n"
+               "Ana~Blumenau~SC\n"
+               "Bruno~Joinville~SC\n"
+               "Carla~Curitiba~PR\n")
+    dialogo = EscolherSeparador(amostra, sugerido="~")
+    try:
+        checa_igual(dialogo.separador(), "~", "abre no separador sugerido")
+        checa_igual(dialogo.previa.columnCount(), 3,
+                    "*** a previa reparte em 3 colunas ANTES de confirmar ***")
+        checa_igual(dialogo.previa.rowCount(), 3,
+                    "tres linhas de dados, o cabecalho virou titulo")
+        titulos = [dialogo.previa.horizontalHeaderItem(c).text()
+                   for c in range(3)]
+        checa_igual(titulos, ["nome", "cidade", "uf"],
+                    "e o cabecalho do arquivo virou o titulo das colunas")
+        checa_igual(dialogo.previa.item(0, 1).text(), "Blumenau",
+                    "com o dado na celula certa")
+
+        # Trocar o separador refaz a previa na hora.
+        posicao = dialogo.caixa.findData(";")
+        dialogo.caixa.setCurrentIndex(posicao)
+        checa_igual(dialogo.previa.columnCount(), 1,
+                    "*** com o separador ERRADO a previa mostra 1 coluna: da' "
+                    "para ver o erro sem abrir a grade ***")
+        checa("provavelmente não é o separador" in dialogo.resumo.text(),
+              f"e a tela DIZ que esta' errado: {dialogo.resumo.text()!r}")
+
+        # Um caractere qualquer, digitado.
+        dialogo.caixa.setCurrentIndex(dialogo.caixa.count() - 1)
+        dialogo.outro.setText("~")
+        checa_igual(dialogo.previa.columnCount(), 3,
+                    "*** e um caractere digitado a' mao vale igual ***")
+
+        # O que nao da' para honrar desabilita o botao, com o motivo na tela.
+        botao = dialogo.botoes.button(
+            QDialogButtonBox.StandardButton.Ok)
+        dialogo.outro.setText('"')
+        checa(not botao.isEnabled(),
+              "*** aspa como separador nao deixa confirmar ***")
+        checa("Não dá" in dialogo.resumo.text(),
+              f"e explica por que: {dialogo.resumo.text()!r}")
+        dialogo.outro.clear()
+        checa(not botao.isEnabled(), "sem separador, nao ha' o que confirmar")
+    finally:
+        dialogo.deleteLater()
+
+
+def testar_separador_escolhido_troca_a_grade() -> None:
+    """Escolher outro separador REFAZ a grade, e nao remenda a que existe.
+
+    O `ModeloCsv` guarda o dialeto no construtor e mantem um cache de blocos ja'
+    repartidos com ele: trocar o atributo na grade viva deixaria as linhas em
+    cache repartidas pelo separador ANTIGO, misturadas com as novas -- e nada
+    na tela diria que metade dos dados esta' errada.
+    """
+    secao("*** Trocar o separador refaz a grade inteira ***")
+
+    from tfedit import csv_dialeto
+
+    # Ponto-e-virgula E' o separador; o til aparece dentro dos dados.
+    linhas = [b"nome;obs"]
+    for i in range(60):
+        linhas.append(f"item{i};a~b~c".encode())
+    dados = b"\r\n".join(linhas) + b"\r\n"
+
+    with pasta_temporaria() as pasta:
+        janela, _ = _janela_com(pasta, "dados.dsv", dados)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("tabela")
+            grade = aba.view("tabela")
+            checa_igual(grade.modelo.dialeto.delimitador, ";",
+                        "a deteccao escolheu o ';'")
+            antes = grade.modelo.columnCount()
+            checa_igual(antes, 2, "duas colunas")
+
+            # Agora o usuario manda usar o til.
+            aba.impor_dialeto(csv_dialeto.com_delimitador(
+                aba.amostra_de_texto(), "~"))
+            checa(not aba.tem_view("tabela"),
+                  "*** a grade antiga foi DESCARTADA, e nao remendada ***")
+
+            janela._montar_view(aba, "tabela")
+            aba.trocar_para("tabela")
+            nova = aba.view("tabela")
+            checa_igual(nova.modelo.dialeto.delimitador, "~",
+                        "a grade nova usa o separador escolhido")
+            checa(nova.modelo.columnCount() != antes,
+                  f"*** e as colunas mudaram de verdade: {antes} -> "
+                  f"{nova.modelo.columnCount()} ***")
+        finally:
+            _encerrar(janela)
+
+
+def testar_a_grade_deixa_de_ser_escondida() -> None:
+    """Um recurso que a pessoa nao sabe que existe nao esta' entregue.
+
+    A grade existe desde a v0.7.0 dentro do menu Visualizar -- que ninguem abre
+    num arquivo de texto. `Aba.visualizador_sugerido` era calculado e NAO tinha
+    um unico leitor.
+    """
+    secao("*** Um CSV avisa que da' para ver em colunas ***")
+
+    linhas = [b"nome;valor;data"]
+    for i in range(80):
+        linhas.append(f"item{i};1{i},50;01/02/2026".encode())
+    dados = b"\r\n".join(linhas) + b"\r\n"
+
+    with pasta_temporaria() as pasta:
+        janela, _ = _janela_com(pasta, "vendas.csv", dados)
+        try:
+            recado = janela.barra.currentMessage()
+            checa("colunas" in recado.lower() or "Colunas" in recado,
+                  f"*** o rodape avisa, sem abrir nada sozinho: {recado!r} ***")
+            checa("ponto e vírgula" in recado,
+                  "e diz qual separador foi reconhecido")
+
+            # Uma vez, e nao a cada varredura: a segunda ja' e' cobranca.
+            aba = janela.aba_atual
+            janela.barra.clearMessage()
+            janela._ao_terminar_indice(aba.original.total_de_linhas)
+            checa("Colunas" not in janela.barra.currentMessage(),
+                  f"*** e nao repete: {janela.barra.currentMessage()!r} ***")
+        finally:
+            _encerrar(janela)
+
+    with pasta_temporaria() as pasta:
+        janela, _ = _janela_com(pasta, "prosa.txt",
+                                b"texto corrido sem separador\r\n" * 40)
+        try:
+            checa("Colunas" not in janela.barra.currentMessage(),
+                  "*** e um texto corrido NAO recebe a sugestao ***")
+        finally:
+            _encerrar(janela)
+
+
+def testar_escolher_separador_aparece_mesmo_sem_deteccao() -> None:
+    """O caso em que ela mais serve e' aquele em que a deteccao nao reconhece.
+
+    Se o item so' aparecesse quando a grade ja' esta' disponivel, ele faltaria
+    exatamente no arquivo que precisa dele.
+    """
+    secao("*** 'Colunas com outro separador' aparece sempre ***")
+
+    from PySide6.QtWidgets import QMenu
+
+    with pasta_temporaria() as pasta:
+        # Separado por ESPACO: a deteccao recusa de proposito.
+        dados = b"".join(f"Item{i:<4} {i * 7:<6} SC\r\n".encode()
+                         for i in range(60))
+        janela, _ = _janela_com(pasta, "largura.txt", dados)
+        try:
+            menu = QMenu()
+            janela._preencher_view(menu)
+            rotulos = [a.text() for a in menu.actions()]
+            checa(GRADE not in rotulos,
+                  f"a deteccao nao reconheceu tabela aqui: {rotulos}")
+            checa(any("outro separador" in r for r in rotulos),
+                  f"*** mas a escolha manual esta' la': {rotulos} ***")
+
+            aba = janela.aba_atual
+            from tfedit import csv_dialeto
+            aba.impor_dialeto(csv_dialeto.com_delimitador(
+                aba.amostra_de_texto(), " "))
+            checa(janela._montar_view(aba, "tabela"),
+                  "*** e com o separador escolhido a grade abre ***")
+            aba.trocar_para("tabela")
+            grade = aba.view("tabela")
+            checa(grade.modelo.columnCount() >= 3,
+                  f"com {grade.modelo.columnCount()} colunas de verdade")
+        finally:
+            _encerrar(janela)
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -749,6 +945,10 @@ def main() -> int:
     testar_desfazer_na_grade_csv()
     testar_desfazer_esquece_o_cache_da_grade()
     testar_desfazer_sem_nada_explica()
+    testar_tela_do_separador_mostra_a_previa()
+    testar_separador_escolhido_troca_a_grade()
+    testar_a_grade_deixa_de_ser_escondida()
+    testar_escolher_separador_aparece_mesmo_sem_deteccao()
     return resumir()
 
 
