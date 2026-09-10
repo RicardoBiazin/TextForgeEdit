@@ -276,6 +276,33 @@ dialeto e mantém um cache de linhas já repartidas: trocar o atributo na grade
 viva deixaria metade dos dados repartida pelo separador antigo, sem nada na tela
 dizendo isso.
 
+### Procurar sem sair das colunas
+
+`Ctrl+F` e `F3` funcionam **dentro** da grade: o resultado seleciona a célula,
+e a visualização em colunas fica de pé. Antes, procurar jogava de volta para o
+modo texto -- desfazendo as colunas exatamente na hora em que elas mais servem,
+que é a de conferir o valor achado.
+
+A conversão não é óbvia. A busca devolve *(linha, coluna de **caractere**)*, e
+na grade isso não é uma coluna: o caractere 6 pode estar no primeiro campo ou
+no quarto, conforme o tamanho dos anteriores. `fatias_de_campos` diz onde cada
+campo começa e acaba na linha crua, e a ocorrência cai dentro de exatamente um.
+
+`F3` também precisou de conta: a grade não tem cursor de caractere, então a
+busca seguinte recomeça do início da célula atual **mais um**. Sem isso, `F3`
+reencontraria a mesma ocorrência para sempre.
+
+**Substituir todas** também mantém a grade -- ela nunca precisou do modo texto,
+porque mexe direto na tabela de peças e não no cursor. O que faltava era jogar
+fora o cache de linhas repartidas depois da troca, senão a grade mostraria os
+valores de antes. Só o **Substituir** um a um ainda volta ao texto: ele compara
+com o que está selecionado no cursor do editor.
+
+No **hexadecimal** a busca continua voltando ao texto, e com razão: ali a
+posição é um *byte*. Mapear caractere para byte exigiria recodificar o prefixo
+de cada linha, e um multibyte no meio faria a seleção cair no lugar errado sem
+nenhum erro visível. Voltar avisando é melhor que acertar por sorte.
+
 ### E o aviso no rodapé
 
 A grade existia desde a v0.7.0 e estava **invisível** -- só dentro do menu

@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QLabel,
                                QVBoxLayout, QWidget)
 
 from tfedit import janela as janela_viva
+from tfedit import csv_dialeto
 from tfedit import recursos
 from tfedit import seguranca
 from tfedit import (APP, AUTOR, VERSAO, busca, codificacao,
@@ -1500,16 +1501,31 @@ class JanelaPrincipal(QMainWindow):
         aba = self.aba_atual
         if aba is None:
             return
-        if not self._exigir_modo_texto(aba, "A busca"):
+        # A GRADE NAO E' EXPULSA. Procurar dentro dela desfazia a
+        # visualizacao em colunas justamente na hora em que ela mais serve --
+        # a de conferir um valor achado. O hexadecimal continua voltando: la'
+        # a posicao e' um byte, e mapear caractere para byte exigiria
+        # recodificar o prefixo de cada linha.
+        na_grade = aba.view_atual() == "tabela"
+        if not na_grade and not self._exigir_modo_texto(aba, "A busca"):
             return
-        cursor = aba.editor.textCursor()
-        linha = aba.editor.linha_atual_no_documento()
-        coluna = cursor.columnNumber()
-        # Ao procurar para a frente, comeca DEPOIS da selecao atual: senao F3
-        # acharia de novo a ocorrencia que ja' esta' selecionada.
-        if not para_tras and cursor.hasSelection():
-            coluna = max(coluna, cursor.selectionEnd()
-                         - cursor.block().position())
+
+        if na_grade:
+            grade = aba.view("tabela")
+            linha = grade.linha_atual()
+            # Na grade nao ha' cursor de caractere: a busca recomeca do inicio
+            # da linha atual. Sem o "+1", F3 acharia de novo a mesma celula e
+            # a busca nunca sairia do lugar.
+            coluna = 0 if para_tras else self._coluna_apos(aba, grade, linha)
+        else:
+            cursor = aba.editor.textCursor()
+            linha = aba.editor.linha_atual_no_documento()
+            coluna = cursor.columnNumber()
+            # Ao procurar para a frente, comeca DEPOIS da selecao atual: senao
+            # F3 acharia de novo a ocorrencia que ja' esta' selecionada.
+            if not para_tras and cursor.hasSelection():
+                coluna = max(coluna, cursor.selectionEnd()
+                             - cursor.block().position())
 
         achado = busca.proxima(aba.documento, criterio, aba.perfil.codec,
                                linha, coluna, para_tras=para_tras)
@@ -1519,8 +1535,29 @@ class JanelaPrincipal(QMainWindow):
         self._ir_para_achado(aba, achado)
         self.barra_busca.dizer(f"linha {achado.linha + 1:,}".replace(",", "."))
 
+    def _coluna_apos(self, aba, grade, linha: int) -> int:
+        """De que caractere recomecar a busca, para F3 andar na grade.
+
+        Sem isto o proximo F3 recomecaria do inicio da MESMA linha e acharia a
+        mesma ocorrencia para sempre. A grade nao tem cursor de caractere, mas
+        tem uma celula atual: recomecar do fim dela e' o equivalente.
+        """
+        indice = grade.currentIndex()
+        if not indice.isValid():
+            return 0
+        registro = grade.modelo.registro_cru(linha)
+        if registro is None:
+            return 0
+        fatias = csv_dialeto.fatias_de_campos(registro, grade.dialeto)
+        if indice.column() >= len(fatias):
+            return 0
+        return fatias[indice.column()][0] + 1
+
     def _ir_para_achado(self, aba: Aba, achado: busca.Achado) -> None:
         """Leva o cursor ate' a ocorrencia, deslizando a fatia se preciso."""
+        if aba.view_atual() == "tabela":
+            aba.view("tabela").ir_para_achado(achado.linha, achado.inicio)
+            return
         aba.editor.ir_para_linha(achado.linha)
         na_fatia = aba.janela.linha_na_fatia(achado.linha)
         if na_fatia < 0:
@@ -1560,7 +1597,12 @@ class JanelaPrincipal(QMainWindow):
         if aba.indexando_agora:
             self._avisar_indexando()
             return
-        if not self._exigir_modo_texto(aba, "A substituição"):
+        # "Substituir todas" mexe direto na tabela de pecas, e nao no cursor
+        # do editor: ela funciona igual com a grade na frente. So' o
+        # "Substituir" um-a-um depende do cursor, e por isso continua exigindo
+        # o modo texto (ver `_substituir_atual`).
+        na_grade = aba.view_atual() == "tabela"
+        if not na_grade and not self._exigir_modo_texto(aba, "A substituição"):
             return
         aba.sincronizar()
 
@@ -1587,9 +1629,14 @@ class JanelaPrincipal(QMainWindow):
         feitas = busca.substituir_todas(aba.documento, criterio,
                                         aba.perfil.codec, troca,
                                         teto=teto)
-        # O documento mudou por baixo da fatia: recarregar e' obrigatorio, senao
-        # o editor mostraria o texto de antes das trocas.
+        # O documento mudou por baixo: recarregar e' obrigatorio, senao a tela
+        # mostraria o texto de antes das trocas. A grade tem cache proprio de
+        # linhas ja' repartidas, e ele precisa ser jogado fora inteiro -- uma
+        # substituicao pode ter mudado qualquer linha do arquivo.
         aba.editor.recarregar(aba.editor.linha_atual_no_documento())
+        grade = aba.view("tabela")
+        if grade is not None:
+            grade.modelo.esquecer_tudo()
         aba.titulo_mudou.emit()
         self.barra_busca.dizer(f"{feitas:,} substituída(s)".replace(",", "."))
         log.info("substituir todas em %s: %d ocorrencia(s)", aba.nome, feitas)

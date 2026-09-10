@@ -145,6 +145,22 @@ class ModeloCsv(QAbstractTableModel):
         posicao = linha_no_documento % BLOCO
         return bloco[posicao] if posicao < len(bloco) else []
 
+    def registro_cru(self, linha_no_documento: int):
+        """A linha inteira, decodificada. `None` quando nao da' para ler.
+
+        O cache guarda os campos ja' repartidos; para mapear uma coluna de
+        CARACTERE e' preciso a linha crua, que e' onde as posicoes da busca
+        fazem sentido.
+        """
+        try:
+            cruas = self.documento.faixa(linha_no_documento,
+                                         linha_no_documento + 1)
+        except Exception:                     # noqa: BLE001 - nunca derrubar
+            return None
+        if not cruas:
+            return None
+        return cruas[0].decode(self.perfil.codec, errors="replace")
+
     def _invalidar(self, linha_no_documento: int) -> None:
         indice = linha_no_documento // BLOCO
         if self._cache.pop(indice, None) is not None:
@@ -437,6 +453,44 @@ class GradeCsv(VisualizadorDeDocumento, QTableView):
         if indice.isValid():
             self.setCurrentIndex(indice)
             self.scrollTo(indice)
+
+    def ir_para_achado(self, linha: int, coluna_de_caractere: int) -> None:
+        """Leva o cursor ate' a CELULA que contem aquele caractere.
+
+        A busca trabalha em (linha, coluna de CARACTERE dentro da linha) -- e' o
+        que o `busca.Achado` devolve. Na grade isso nao e' uma coluna: a coluna
+        3 de caracteres pode estar no primeiro campo ou no quarto, conforme o
+        tamanho dos anteriores. `fatias_de_campos` diz onde cada campo comeca e
+        acaba na linha crua, e a ocorrencia cai dentro de exatamente um deles.
+
+        Antes disto, procurar dentro da grade EXPULSAVA o usuario para o modo
+        texto: a visualizacao em colunas se perdia justamente na hora em que
+        ela mais serve, que e' a de conferir um valor achado.
+        """
+        self.ir_para_linha(linha)
+        indice = self.currentIndex()
+        if not indice.isValid():
+            return
+
+        registro = self.modelo.registro_cru(linha)
+        if registro is None:
+            return
+        fatias = csv_dialeto.fatias_de_campos(registro, self.dialeto)
+        alvo = 0
+        for numero, (comeco, fim) in enumerate(fatias):
+            if comeco <= coluna_de_caractere < fim:
+                alvo = numero
+                break
+            # Um achado que cai EM CIMA do separador (ou passa do fim da
+            # linha) fica no campo anterior, em vez de nao ir a lugar nenhum.
+            if coluna_de_caractere >= fim:
+                alvo = numero
+
+        alvo = min(alvo, max(0, self.modelo.columnCount() - 1))
+        celula = self.modelo.index(indice.row(), alvo)
+        if celula.isValid():
+            self.setCurrentIndex(celula)
+            self.scrollTo(celula)
 
     def desfazer(self) -> None:
         """Ctrl+Z na grade desfaz na TABELA DE PECAS.

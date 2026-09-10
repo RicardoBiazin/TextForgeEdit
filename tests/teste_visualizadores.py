@@ -917,6 +917,151 @@ def testar_escolher_separador_aparece_mesmo_sem_deteccao() -> None:
         finally:
             _encerrar(janela)
 
+
+def _grade_com_busca(pasta):
+    """Uma janela com a grade aberta sobre um CSV de campos identificaveis."""
+    linhas = [b"codigo;produto;cidade"]
+    for i in range(120):
+        linhas.append(f"C{i:04};cabo de rede;Blumenau".encode())
+    # Uma agulha em cada coluna diferente, em linhas diferentes.
+    linhas[30] = b"C0029;AGULHA;Blumenau"
+    linhas[60] = b"C0059;cabo de rede;AGULHA"
+    linhas[90] = b"AGULHA;cabo de rede;Joinville"
+    dados = b"\r\n".join(linhas) + b"\r\n"
+
+    janela, _ = _janela_com(pasta, "estoque.csv", dados)
+    janela._trocar_view("tabela")
+    return janela
+
+
+def testar_busca_NAO_expulsa_da_grade() -> None:
+    """O defeito relatado: procurar desfazia a visualizacao em colunas.
+
+    Era uma decisao minha, e estava errada. Busca e substituicao voltavam ao
+    modo texto porque `busca.Achado` da' (linha, coluna de CARACTERE) e no
+    hexadecimal a posicao e' um byte -- mas na GRADE nao ha' esse problema:
+    `fatias_de_campos` diz onde cada campo comeca na linha crua, e a ocorrencia
+    cai dentro de exatamente um deles. A visualizacao em colunas se perdia
+    justamente na hora em que ela mais serve: a de conferir o valor achado.
+    """
+    secao("*** Procurar NAO expulsa da grade de colunas ***")
+
+    from tfedit import busca
+
+    with pasta_temporaria() as pasta:
+        janela = _grade_com_busca(pasta)
+        try:
+            aba = janela.aba_atual
+            checa_igual(aba.view_atual(), "tabela", "a grade esta' aberta")
+
+            criterio = busca.Criterio(texto="AGULHA")
+            janela._procurar(criterio, False)
+
+            checa_igual(aba.view_atual(), "tabela",
+                        "*** e CONTINUA aberta depois de procurar: antes "
+                        "disto, a busca jogava de volta para o texto ***")
+
+            grade = aba.view("tabela")
+            indice = grade.currentIndex()
+            checa(indice.isValid(), "a grade tem uma celula selecionada")
+            checa_igual(grade.linha_atual(), 30,
+                        "*** na linha da ocorrencia ***")
+            checa_igual(indice.column(), 1,
+                        "*** e na COLUNA certa: a agulha esta' no segundo "
+                        "campo, e a busca so' sabia dizer 'coluna 6 de "
+                        "caractere' ***")
+
+            # F3 anda, em vez de reachar a mesma celula.
+            janela._procurar(criterio, False)
+            checa_igual(grade.linha_atual(), 60,
+                        "*** F3 vai para a ocorrencia SEGUINTE: sem o "
+                        "'coluna apos', ele reacharia a mesma para sempre ***")
+            checa_igual(grade.currentIndex().column(), 2,
+                        "e agora no terceiro campo")
+
+            janela._procurar(criterio, False)
+            checa_igual(grade.linha_atual(), 90, "e na terceira")
+            checa_igual(grade.currentIndex().column(), 0,
+                        "*** no PRIMEIRO campo -- a coluna de caractere 0 nao "
+                        "e' 'a primeira coluna' por acidente, e' por calculo "
+                        "***")
+            checa_igual(aba.view_atual(), "tabela",
+                        "e a grade continua de pe' o tempo todo")
+        finally:
+            _encerrar(janela)
+
+
+def testar_hexadecimal_CONTINUA_voltando_ao_texto() -> None:
+    """A contraprova: no hexadecimal a volta ao texto tem razao de ser.
+
+    La' a posicao e' um BYTE. Mapear (linha, coluna de caractere) para byte
+    exigiria recodificar o prefixo de cada linha, e um multibyte no meio faria
+    a selecao cair no lugar errado sem nenhum erro visivel. Voltar avisando e'
+    melhor que acertar por sorte.
+    """
+    secao("*** No hexadecimal, a busca ainda volta ao texto ***")
+
+    from tfedit import busca
+
+    with pasta_temporaria() as pasta:
+        janela = _grade_com_busca(pasta)
+        try:
+            aba = janela.aba_atual
+            janela._trocar_view("hex")
+            checa_igual(aba.view_atual(), "hex", "o hexadecimal esta' aberto")
+
+            janela._procurar(busca.Criterio(texto="AGULHA"), False)
+            checa_igual(aba.view_atual(), "texto",
+                        "*** e a busca volta ao texto, como antes ***")
+            checa("modo texto" in janela.barra.currentMessage(),
+                  f"avisando por que: {janela.barra.currentMessage()!r}")
+        finally:
+            _encerrar(janela)
+
+
+def testar_substituir_todas_funciona_na_grade() -> None:
+    """"Substituir todas" mexe na TABELA DE PECAS, e nao no cursor do editor.
+
+    Ela nunca precisou do modo texto -- so' o "Substituir" um-a-um precisa,
+    porque compara com o que esta' selecionado no cursor. O que faltava era a
+    grade jogar fora o cache: ela guarda linhas ja' repartidas, e uma
+    substituicao pode ter mudado qualquer linha do arquivo.
+    """
+    secao("*** Substituir todas mantem a grade, e ela mostra o resultado ***")
+
+    from tfedit import busca
+
+    with pasta_temporaria() as pasta:
+        janela = _grade_com_busca(pasta)
+        try:
+            aba = janela.aba_atual
+            grade = aba.view("tabela")
+            # Encher o cache com o valor ANTIGO antes de substituir.
+            antes = grade.modelo.data(grade.modelo.index(29, 1))
+            checa_igual(antes, "AGULHA", "a celula mostra o valor antigo")
+
+            # Sem perguntar: o QMessageBox modal travaria a suite.
+            respostas = []
+            from PySide6.QtWidgets import QMessageBox
+            original = QMessageBox.question
+            QMessageBox.question = staticmethod(
+                lambda *a, **k: (respostas.append(1),
+                                 QMessageBox.StandardButton.Yes)[1])
+            try:
+                janela._substituir_todas(
+                    busca.Criterio(texto="AGULHA"), "LINHA")
+            finally:
+                QMessageBox.question = original
+
+            checa_igual(aba.view_atual(), "tabela",
+                        "*** a grade continua aberta ***")
+            depois = grade.modelo.data(grade.modelo.index(29, 1))
+            checa_igual(depois, "LINHA",
+                        "*** e mostra o valor NOVO: sem `esquecer_tudo()` ela "
+                        "mostraria o cache de antes da troca ***")
+        finally:
+            _encerrar(janela)
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -949,6 +1094,9 @@ def main() -> int:
     testar_separador_escolhido_troca_a_grade()
     testar_a_grade_deixa_de_ser_escondida()
     testar_escolher_separador_aparece_mesmo_sem_deteccao()
+    testar_busca_NAO_expulsa_da_grade()
+    testar_hexadecimal_CONTINUA_voltando_ao_texto()
+    testar_substituir_todas_funciona_na_grade()
     return resumir()
 
 
