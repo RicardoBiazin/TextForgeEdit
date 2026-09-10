@@ -32,6 +32,17 @@ from tfedit import log_interno, tema as tema_mod
 
 log = log_interno.obter(__name__)
 
+#: Como a margem de números se comporta.
+#:
+#: São três, e não um sim/não: "só a do cursor" é um visual limpo que algumas
+#: pessoas preferem, e era -- por acidente -- o que o programa mostrava antes
+#: de a cor da margem ser corrigida.
+NUMERO_DE_LINHA = (
+    ("todas", "Todas, realçando a linha do cursor"),
+    ("atual", "Somente a linha do cursor"),
+    ("nenhum", "Nenhum"),
+)
+
 #: Rótulo de cada tema, na ordem em que aparecem.
 TEMAS = (("sistema", "Seguir o Windows"),
          ("escuro", "Escuro"),
@@ -122,9 +133,12 @@ class Configuracoes(QDialog):
         pagina = QWidget(self)
         forma = QFormLayout(pagina)
 
-        self.numero_de_linha = QCheckBox("Sempre exibir", pagina)
-        self.numero_de_linha.setChecked(
-            bool(self.cfg.get("mostrar_numero_de_linha", True)))
+        self.numero_de_linha = QComboBox(pagina)
+        for chave, rotulo in NUMERO_DE_LINHA:
+            self.numero_de_linha.addItem(rotulo, chave)
+        atual_numero = str(self.cfg.get("numero_de_linha", "todas"))
+        indice = self.numero_de_linha.findData(atual_numero)
+        self.numero_de_linha.setCurrentIndex(indice if indice >= 0 else 0)
         forma.addRow("&Número de linha:", self.numero_de_linha)
 
         self.quebrar = QCheckBox("Quebrar linhas longas na largura da janela",
@@ -254,7 +268,7 @@ class Configuracoes(QDialog):
 
         novo["restaurar_sessao"] = self.restaurar.isChecked()
         novo["soltar_arquivo_apos_s"] = self.soltar.value()
-        novo["mostrar_numero_de_linha"] = self.numero_de_linha.isChecked()
+        novo["numero_de_linha"] = self.numero_de_linha.currentData()
         novo["quebrar_linha"] = self.quebrar.isChecked()
         novo["fonte"] = self.fonte.text().strip() or "Consolas"
         novo["fonte_tamanho"] = self.tamanho.value()

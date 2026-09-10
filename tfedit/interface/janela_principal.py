@@ -399,7 +399,7 @@ class JanelaPrincipal(QMainWindow):
         self._montar_barra_de_atalhos()
         self.barra.showMessage("Preferências salvas.", 5000)
         log.info("configuracao aplicada: tema=%s, numero de linha=%s",
-                 self.cfg.get("tema"), self.cfg.get("mostrar_numero_de_linha"))
+                 self.cfg.get("tema"), self.cfg.get("numero_de_linha"))
 
     # ==================================================================
     # Formatar

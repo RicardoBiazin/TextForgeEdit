@@ -224,6 +224,24 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Números de linha
+
+`Configurações → Editor → Número de linha`, com três estados:
+
+| | |
+|---|---|
+| **Todas** | todos os números, com a linha do cursor realçada (padrão) |
+| **Somente a linha do cursor** | visual limpo |
+| **Nenhum** | a margem some, com largura zero |
+
+A margem pintava com a `palette()` do Qt em vez do tema. Medido: fundo
+`#f7f7f7` com números `#b8b8b8` — **63 de diferença de luminância**, contra 83
+das cores do tema. E a `palette()` de um widget não acompanha o tema do editor,
+então a margem ficava presa nas cores padrão do Qt em qualquer tema. Só o número
+da **linha do cursor** usava outra cor, e por isso era o único que se
+distinguia — parecia um recurso e era uma cor errada. O tema sempre teve
+`editor.margem_texto` e `editor.margem_texto_atual`, sem ninguém usar.
+
 ## Configurações
 
 `Arquivo → Configurações` (`Ctrl+,`): tema (escuro, claro, **azul** ou seguir o

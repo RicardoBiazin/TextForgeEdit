@@ -318,6 +318,9 @@ class EditorDeslizante(QPlainTextEdit):
         self.centerCursor()
 
     def _ao_mover_cursor(self) -> None:
+        # A margem realca a linha do cursor: ela precisa ser repintada quando o
+        # cursor anda, senao o realce fica preso onde ele estava.
+        self.margem.update()
         if self._deslizando:
             return
         linha = self.linha_atual_no_documento()
@@ -342,7 +345,7 @@ class EditorDeslizante(QPlainTextEdit):
     def largura_da_margem(self) -> int:
         # Desligada, a margem tem largura ZERO -- e' assim que ela some sem
         # precisar esconder o widget nem mexer no layout.
-        if not self.cfg.get("mostrar_numero_de_linha", True):
+        if self.modo_do_numero_de_linha() == "nenhum":
             return 0
         total = max(1, self.janela.documento.total_de_linhas)
         digitos = max(4, len(str(total)))
@@ -365,26 +368,75 @@ class EditorDeslizante(QPlainTextEdit):
                                       self.largura_da_margem(), area.height()))
 
     def pintar_margem(self, evento) -> None:
+        """Os numeros de linha.
+
+        AS CORES SAEM DO TEMA, e nao da `palette()` do Qt. Nao e' preferencia
+        de estilo.
+
+        MEDIDO no programa: a margem se pintava com `palette().alternateBase()`
+        (#f7f7f7) e escrevia os numeros em `palette().mid()` (#b8b8b8) -- 63 de
+        diferenca de luminancia, contra 83 das cores do tema. E a `palette()` de
+        um widget NAO acompanha o tema do editor, entao a margem ficava presa
+        nas cores padrao do Qt em qualquer tema.
+
+        So' o numero da LINHA DO CURSOR usava outra cor, e por isso era o unico
+        que se distinguia -- parecia um recurso ("mostra so' a linha atual") e
+        era uma cor errada. O tema sempre teve `editor.margem_texto` e
+        `editor.margem_texto_atual` para isto, sem ninguem usar.
+        """
+        modo = self.modo_do_numero_de_linha()
+        if modo == "nenhum":
+            return
+
         pintor = QPainter(self.margem)
-        pintor.fillRect(evento.rect(), self.palette().alternateBase())
+        pintor.fillRect(evento.rect(), self.cor_da_margem("editor.margem_fundo"))
+
         bloco = self.firstVisibleBlock()
         topo = round(self.blockBoundingGeometry(bloco)
                      .translated(self.contentOffset()).top())
         altura = round(self.blockBoundingRect(bloco).height())
         atual = self.textCursor().blockNumber()
 
+        comum = self.cor_da_margem("editor.margem_texto")
+        destacado = self.cor_da_margem("editor.margem_texto_atual")
+        fundo_atual = self.cor_da_margem("editor.linha_atual")
+        largura = self.margem.width()
+
         while bloco.isValid() and topo <= evento.rect().bottom():
             if bloco.isVisible() and topo + altura >= evento.rect().top():
-                # O numero e' o do DOCUMENTO. Mostrar o da fatia faria a linha 1
-                # aparecer no meio de um arquivo de 13 milhoes de linhas.
-                numero = self.janela.linha_no_documento(bloco.blockNumber()) + 1
-                pintor.setPen(self.palette().text().color()
-                              if bloco.blockNumber() == atual
-                              else self.palette().mid().color())
-                pintor.drawText(0, topo, self.margem.width() - 6, altura,
-                                int(Qt.AlignmentFlag.AlignRight
-                                    | Qt.AlignmentFlag.AlignVCenter),
-                                str(numero))
+                e_o_atual = bloco.blockNumber() == atual
+                if modo == "todas" or e_o_atual:
+                    # O numero e' o do DOCUMENTO. Mostrar o da fatia faria a
+                    # linha 1 aparecer no meio de um arquivo de 13 milhoes.
+                    numero = self.janela.linha_no_documento(
+                        bloco.blockNumber()) + 1
+                    if e_o_atual and modo == "todas":
+                        # Mostrando TODAS, a cor sozinha se perde no meio dos
+                        # outros numeros: a faixa e' o que diz onde o cursor
+                        # esta' sem obrigar a procurar.
+                        pintor.fillRect(0, topo, largura, altura, fundo_atual)
+                    pintor.setPen(destacado if e_o_atual else comum)
+                    pintor.drawText(0, topo, largura - 6, altura,
+                                    int(Qt.AlignmentFlag.AlignRight
+                                        | Qt.AlignmentFlag.AlignVCenter),
+                                    str(numero))
             bloco = bloco.next()
             topo += altura
+
+        # A borda separa a margem do texto. Sem ela, com a margem e o editor
+        # em tons proximos, os numeros parecem parte do conteudo.
+        pintor.setPen(self.cor_da_margem("editor.margem_borda"))
+        pintor.drawLine(largura - 1, evento.rect().top(),
+                        largura - 1, evento.rect().bottom())
         pintor.end()
+
+    def cor_da_margem(self, caminho: str):
+        from tfedit import tema as tema_mod
+
+        alvo = self.tema if self.tema is not None else tema_mod.embutido("escuro")
+        return alvo.cor(caminho)
+
+    def modo_do_numero_de_linha(self) -> str:
+        """"nenhum", "atual" ou "todas". Ver `configuracao.padrao()`."""
+        valor = self.cfg.get("numero_de_linha", "todas")
+        return valor if valor in ("nenhum", "atual", "todas") else "todas"

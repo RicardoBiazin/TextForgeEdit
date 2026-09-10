@@ -67,7 +67,9 @@ def padrao() -> dict[str, Any]:
         "quebrar_linha": False,
         # "escuro", "claro", "azul" ou "sistema" (segue o Windows).
         "tema": "sistema",
-        "mostrar_numero_de_linha": True,
+        # "todas" (com a do cursor realcada), "atual" (so' a do cursor) ou
+        # "nenhum".
+        "numero_de_linha": "todas",
 
         # -- janela ---------------------------------------------------------
         "janela_largura": 1150,
@@ -150,6 +152,13 @@ def carregar() -> dict[str, Any]:
     if not isinstance(lido, dict):
         log.warning("config não é um objeto JSON; usando o padrão")
         return valores
+
+    # Um `mostrar_numero_de_linha` booleano vem de uma versão anterior. Sem
+    # esta tradução, quem tinha DESLIGADO o número de linha veria ele voltar
+    # sozinho -- a chave antiga seria ignorada por não existir mais no padrão.
+    antigo = lido.pop("mostrar_numero_de_linha", None)
+    if isinstance(antigo, bool) and "numero_de_linha" not in lido:
+        lido["numero_de_linha"] = "todas" if antigo else "nenhum"
 
     # União, e não substituição: uma versão nova traz chaves que o arquivo
     # antigo não tem, e uma chave que sumiu do padrão não deve voltar.

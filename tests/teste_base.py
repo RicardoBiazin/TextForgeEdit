@@ -444,7 +444,40 @@ def testar_script_de_associacao() -> None:
           "o cabecalho explica por que o programa PADRAO nao sai daqui")
 
 
+def testar_versao_bate_em_todo_lugar() -> None:
+    """A versão aparece em quatro lugares e três formatos diferentes.
+
+    O `filevers` do `versao.txt` ficou preso em `(0, 4, 0, 0)` por NOVE
+    versões: o `sed` do release trocava a string `FileVersion`, que é texto, e
+    passava batido pela tupla, que não é. Quem abrisse as propriedades do .exe
+    no Windows leria 0.4.0 -- e é exatamente de lá que sai o número num
+    relatório de bug. O comentário no topo do `versao.txt` já mandava conferir;
+    conferir à mão é o que não acontece.
+    """
+    secao("*** A versão bate em `__init__`, `versao.txt` e no manifesto ***")
+
+    from tfedit import VERSAO
+
+    raiz = pathlib.Path(__file__).resolve().parent.parent
+    partes = VERSAO.split(".")
+    checa_igual(len(partes), 3, f"a versão tem três partes: {VERSAO}")
+
+    recurso = (raiz / "versao.txt").read_text(encoding="utf-8")
+    tupla = f"({partes[0]}, {partes[1]}, {partes[2]}, 0)"
+    for campo in ("filevers", "prodvers"):
+        checa(f"{campo}={tupla}" in recurso,
+              f"*** `versao.txt`: {campo}={tupla} -- é a tupla que o Windows "
+              f"mostra nas propriedades do arquivo ***")
+    for campo in ("FileVersion", "ProductVersion"):
+        checa(f"StringStruct('{campo}', '{VERSAO}')" in recurso,
+              f"`versao.txt`: {campo} = {VERSAO}")
+
+    manifesto = (raiz / "textforgeedit.manifest").read_text(encoding="utf-8")
+    checa(VERSAO in manifesto, f"o manifesto declara {VERSAO}")
+
+
 def main() -> int:
+    testar_versao_bate_em_todo_lugar()
     testar_configuracao()
     testar_recentes()
     testar_cli()

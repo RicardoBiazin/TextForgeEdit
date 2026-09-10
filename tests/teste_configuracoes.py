@@ -141,13 +141,14 @@ def testar_dialogo_devolve_o_que_foi_escolhido() -> None:
     dialogo = Configuracoes(cfg, None)
 
     dialogo.tema.setCurrentIndex(dialogo.tema.findData("azul"))
-    dialogo.numero_de_linha.setChecked(False)
+    dialogo.numero_de_linha.setCurrentIndex(
+        dialogo.numero_de_linha.findData("atual"))
     dialogo.tamanho.setValue(14)
     dialogo.substituicoes.setValue(5000)
 
     novo = dialogo.valores()
     checa_igual(novo["tema"], "azul", "o tema escolhido volta")
-    checa_igual(novo["mostrar_numero_de_linha"], False, "e o número de linha")
+    checa_igual(novo["numero_de_linha"], "atual", "e o número de linha")
     checa_igual(novo["fonte_tamanho"], 14, "e o tamanho da fonte")
     checa_igual(novo["limite_de_substituicoes"], 5000, "e o teto")
     checa_igual(cfg["tema"], "sistema",
@@ -219,26 +220,151 @@ def testar_tema_vale_na_hora() -> None:
 
 
 def testar_numero_de_linha_vale_na_hora() -> None:
-    secao("*** Desligar o número de linha vale AGORA ***")
+    secao("*** Trocar o modo do número de linha vale AGORA ***")
 
     janela = _janela()
     try:
         aba = janela.aba_atual
         com = aba.editor.largura_da_margem()
-        checa(com > 0, f"com número de linha, a margem tem {com} px")
+        checa(com > 0, f"mostrando números, a margem tem {com} px")
 
         anterior = dict(janela.cfg)
-        janela.cfg = {**janela.cfg, "mostrar_numero_de_linha": False}
+        janela.cfg = {**janela.cfg, "numero_de_linha": "nenhum"}
         janela.aplicar_configuracao(anterior)
-
         checa_igual(aba.editor.largura_da_margem(), 0,
-                    "*** desligado, a margem tem largura ZERO: é assim que "
+                    "*** em 'nenhum', a margem tem largura ZERO: é assim que "
                     "ela some sem mexer no layout ***")
 
         anterior = dict(janela.cfg)
-        janela.cfg = {**janela.cfg, "mostrar_numero_de_linha": True}
+        janela.cfg = {**janela.cfg, "numero_de_linha": "todas"}
         janela.aplicar_configuracao(anterior)
         checa_igual(aba.editor.largura_da_margem(), com, "e volta igual")
+        checa_igual(aba.editor.modo_do_numero_de_linha(), "todas",
+                    "o editor enxerga o modo escolhido")
+
+        # Um valor estranho no arquivo de configuração não pode apagar a
+        # margem: cai no padrão em vez de virar "nenhum" por acidente.
+        anterior = dict(janela.cfg)
+        janela.cfg = {**janela.cfg, "numero_de_linha": "azul-claro"}
+        janela.aplicar_configuracao(anterior)
+        checa_igual(aba.editor.modo_do_numero_de_linha(), "todas",
+                    "*** um valor desconhecido cai em 'todas', e não some "
+                    "com a margem ***")
+    finally:
+        _encerrar(janela)
+
+
+def _luz(cor) -> float:
+    """Luminância aproximada, para medir contraste sem depender do olho."""
+    return 0.299 * cor.red() + 0.587 * cor.green() + 0.114 * cor.blue()
+
+
+def testar_margem_pinta_com_o_TEMA() -> None:
+    """O defeito: a margem ignorava o tema e usava a `palette()` do Qt.
+
+    MEDIDO no programa de verdade: a margem se pintava com
+    `palette().alternateBase()` (#f7f7f7) e escrevia os números em
+    `palette().mid()` (#b8b8b8) -- 63 de diferença de luminância. Só o número
+    da linha do cursor saía em outra cor, e por isso era o único que se
+    distinguia. Parecia um recurso ("mostra só a linha atual") e era uma cor
+    errada: o tema sempre teve `editor.margem_texto` e
+    `editor.margem_texto_atual`, sem ninguém usar.
+    """
+    secao("*** Os números aparecem: a margem pinta com o TEMA ***")
+
+    from tfedit import tema as tema_mod
+
+    fonte = (RAIZ / "tfedit/interface/editor.py").read_text(encoding="utf-8")
+    inicio = fonte.index("def pintar_margem")
+    fim = fonte.index("def cor_da_margem")
+    checa("self.palette()" not in fonte[inicio:fim],
+          "*** a pintura da margem NÃO chama mais `self.palette()`: as cores "
+          "vêm do tema ***")
+    checa("cor_da_margem" in fonte[inicio:fim],
+          "*** e tira as cores do tema ***")
+
+    for nome in ("escuro", "claro", "azul"):
+        tema = tema_mod.carregar(nome)
+        fundo = tema.cor("editor.margem_fundo")
+        comum = tema.cor("editor.margem_texto")
+        atual = tema.cor("editor.margem_texto_atual")
+        checa(abs(_luz(fundo) - _luz(comum)) > 60,
+              f"{nome}: os números comuns contrastam com a margem "
+              f"({abs(_luz(fundo) - _luz(comum)):.0f} de luminância)")
+        checa(abs(_luz(comum) - _luz(atual)) > 40,
+              f"*** {nome}: e o número do cursor se distingue dos outros "
+              f"({abs(_luz(comum) - _luz(atual)):.0f}) ***")
+
+    janela = _janela()
+    try:
+        editor = janela.aba_atual.editor
+        editor.resize(700, 300)
+        editor.show()
+
+        def tinta(modo: str) -> int:
+            anterior = dict(janela.cfg)
+            janela.cfg = {**janela.cfg, "numero_de_linha": modo}
+            janela.aplicar_configuracao(anterior)
+            if editor.largura_da_margem() == 0:
+                return 0
+            editor.margem.resize(editor.largura_da_margem(), 300)
+            imagem = editor.margem.grab().toImage()
+            fundo = editor.cor_da_margem("editor.margem_fundo").rgb()
+            return sum(1 for y in range(imagem.height())
+                       for x in range(imagem.width())
+                       if imagem.pixelColor(x, y).rgb() != fundo)
+
+        todas = tinta("todas")
+        atual = tinta("atual")
+        nenhum = tinta("nenhum")
+
+        checa(todas > 500,
+              f"*** em 'todas' há {todas} pixels desenhados na margem, com "
+              f"as cores do tema ***")
+        checa(atual < todas / 3,
+              f"*** em 'atual' há bem menos ({atual}): só o número do "
+              f"cursor ***")
+        checa_igual(nenhum, 0, "e em 'nenhum' a margem não existe")
+    finally:
+        _encerrar(janela)
+
+
+def testar_realce_da_linha_do_cursor() -> None:
+    secao("*** Mostrando todas, a linha do cursor fica realçada ***")
+
+    janela = _janela()
+    try:
+        aba = janela.aba_atual
+        editor = aba.editor
+        for _ in range(30):
+            editor.insertPlainText("linha de conteúdo\n")
+        editor.sincronizar()
+        anterior = dict(janela.cfg)
+        janela.cfg = {**janela.cfg, "numero_de_linha": "todas"}
+        janela.aplicar_configuracao(anterior)
+
+        editor.resize(700, 300)
+        editor.show()
+        editor.margem.resize(editor.largura_da_margem(), 300)
+
+        def cores_da_margem() -> set:
+            imagem = editor.margem.grab().toImage()
+            return {imagem.pixelColor(x, y).name()
+                    for y in range(imagem.height())
+                    for x in range(imagem.width())}
+
+        cores = cores_da_margem()
+        destaque = editor.cor_da_margem("editor.margem_texto_atual").name()
+        comum = editor.cor_da_margem("editor.margem_texto").name()
+        faixa = editor.cor_da_margem("editor.linha_atual").name()
+
+        checa(comum in cores,
+              f"*** os números comuns estão lá, em {comum} ***")
+        checa(destaque in cores,
+              f"*** e o da linha do cursor em outra cor, {destaque} ***")
+        checa(faixa in cores,
+              f"*** com uma faixa de fundo ({faixa}): a cor sozinha se perde "
+              f"no meio dos outros números ***")
     finally:
         _encerrar(janela)
 
@@ -455,6 +581,8 @@ def main() -> int:
     testar_pasta_inexistente_vira_vazio()
     testar_tema_vale_na_hora()
     testar_numero_de_linha_vale_na_hora()
+    testar_margem_pinta_com_o_TEMA()
+    testar_realce_da_linha_do_cursor()
     testar_menu_tem_configuracoes()
     testar_icones_legiveis_a_16px()
     testar_icones_seguem_o_tema()
