@@ -166,6 +166,34 @@ def autoverificacao() -> int:
     return 0
 
 
+#: Identifica o programa para a barra de tarefas do Windows. E' o "AppUserModel
+#: ID": e' por ele que o Windows decide qual icone mostrar, sob que botao
+#: agrupar as janelas e o que fixar quando alguem fixa o programa na barra.
+#: A forma recomendada e' Empresa.Produto.SubProduto.Versao.
+ID_NO_WINDOWS = "RicardoBiazin.TextForgeEdit.Editor.1"
+
+
+def _identidade_no_windows() -> None:
+    """Diz ao Windows que este processo e' o TextForgeEdit, e nao o Python.
+
+    So' faz sentido no Windows, e falhar aqui nao pode impedir o programa de
+    abrir: no pior caso o icone da barra de tarefas fica generico, que e'
+    exatamente o estado de antes.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            ID_NO_WINDOWS)
+    except Exception as erro:                 # noqa: BLE001 - nunca derrubar
+        from tfedit import log_interno
+
+        log_interno.obter(__name__).info(
+            "nao deu para registrar o AppUserModelID: %s", erro)
+
+
 def main() -> int:
     if "--autoverificacao" in sys.argv:
         import os
@@ -175,7 +203,7 @@ def main() -> int:
     from PySide6.QtWidgets import QApplication
 
     from tfedit import (APP, VERSAO, cli, configuracao, idioma,
-                        instancia_unica, log_interno)
+                        instancia_unica, log_interno, recursos)
     from tfedit.interface.janela_principal import JanelaPrincipal
     from tfedit.interface.aba import limpar_rascunhos_antigos
 
@@ -185,9 +213,21 @@ def main() -> int:
     log_interno.instalar_captura_de_erros()
     log_interno.registrar_partida(VERSAO)
 
+    # A IDENTIDADE NO WINDOWS VEM ANTES DA PRIMEIRA JANELA. Sem este
+    # AppUserModelID o Windows agrupa a janela sob o processo que a criou --
+    # `python.exe` rodando do fonte --, e a barra de tarefas mostra o icone do
+    # Python, por mais que o `setWindowIcon` abaixo esteja certo. Depois de a
+    # janela existir nao adianta mais: a identidade e' lida na criacao dela.
+    _identidade_no_windows()
+
     aplicacao = QApplication(sys.argv)
     aplicacao.setApplicationName(APP)
     aplicacao.setApplicationVersion(VERSAO)
+    # O icone da JANELA, que nao e' o mesmo que o icone do ARQUIVO. O .ico
+    # estava embutido no .exe desde sempre (e' por isso que o Explorer o
+    # mostrava), mas o recurso do executavel so' vale para o shell: ninguem
+    # nunca disse a' aplicacao Qt qual era o seu icone.
+    aplicacao.setWindowIcon(recursos.icone_do_aplicativo())
     # A traducao do Qt entra ANTES da primeira janela: os textos ja' montados
     # nao sao retraduzidos sozinhos.
     idioma.instalar(aplicacao)

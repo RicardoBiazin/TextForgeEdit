@@ -16,6 +16,7 @@ PULA inteira se o PySide6 nao estiver instalado.
 
 from __future__ import annotations
 
+import pathlib
 import sys
 
 from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
@@ -863,6 +864,82 @@ def testar_menu_tem_novo() -> None:
         encerrar(janela)
 
 
+
+def testar_a_janela_tem_icone() -> None:
+    """A JANELA tem icone, e nao so' o arquivo no disco.
+
+    O defeito, que durou treze versoes: o `.ico` estava embutido no .exe pelo
+    PyInstaller desde o comeco -- por isso o Explorer sempre mostrou o icone
+    certo -- mas `setWindowIcon` NUNCA foi chamado em lugar nenhum. O recurso
+    do executavel so' vale para o shell; a janela que o Qt cria nasce sem icone
+    ate' alguem dizer qual e'. Barra de titulo e barra de tarefas ficavam com o
+    generico, num programa cujo arquivo tinha o icone certo -- e e' exatamente
+    esse contraste que fez o defeito passar despercebido tanto tempo.
+
+    Os testes de icone que ja' existiam conferiam o ARQUIVO (`teste_base.py`
+    decodifica o .ico e mede os tracos). Nenhum perguntava se a janela usava.
+    """
+    secao("*** A janela tem icone ***")
+
+    from tfedit import recursos
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    icone = recursos.icone_do_aplicativo()
+    checa(not icone.isNull(),
+          "*** o Qt CONSEGUE ler o .ico: se o plugin `qico` faltasse no .exe, "
+          "o icone sumiria so' na versao empacotada ***")
+    tamanhos = sorted(s.width() for s in icone.availableSizes())
+    checa(16 in tamanhos,
+          f"*** e enxerga a versao de 16 px, que e' a da barra de titulo: "
+          f"{tamanhos} ***")
+    checa(256 in tamanhos, "e a de 256, para telas grandes")
+
+    janela = JanelaPrincipal()
+    try:
+        da_janela = janela.windowIcon()
+        checa(not da_janela.isNull(),
+              "*** a JANELA tem icone -- durante treze versoes ela nao tinha, "
+              "porque `setWindowIcon` nao era chamado em lugar nenhum ***")
+        # E' o icone do programa, e nao um qualquer.
+        mapa = da_janela.pixmap(32, 32).toImage()
+        esperado = icone.pixmap(32, 32).toImage()
+        checa(mapa == esperado, "e e' o icone do programa, nao outro")
+
+        opacos = sum(1 for y in range(mapa.height())
+                     for x in range(mapa.width())
+                     if mapa.pixelColor(x, y).alpha() > 0)
+        checa(opacos > 200,
+              f"*** com {opacos} pixels desenhados a 32 px: um QIcon que "
+              f"carrega mas vem vazio passaria em todo teste acima ***")
+    finally:
+        encerrar(janela)
+
+
+def testar_o_app_define_o_icone_e_a_identidade() -> None:
+    """O `app.py` faz as duas coisas, e na ORDEM certa.
+
+    `setWindowIcon` sozinho nao basta no Windows: sem o AppUserModelID, a
+    barra de tarefas agrupa a janela sob o processo que a criou -- `python.exe`
+    quando se roda do fonte -- e mostra o icone do Python por mais correto que
+    o `setWindowIcon` esteja. E a identidade tem de ser registrada ANTES da
+    primeira janela: ela e' lida na criacao dela.
+    """
+    secao("*** O app.py define icone e identidade, nessa ordem ***")
+
+    raiz = pathlib.Path(__file__).resolve().parent.parent
+    fonte = (raiz / "app.py").read_text(encoding="utf-8")
+
+    checa("setWindowIcon" in fonte, "o app.py define o icone da aplicacao")
+    checa("SetCurrentProcessExplicitAppUserModelID" in fonte,
+          "*** e registra o AppUserModelID: sem ele a barra de tarefas mostra "
+          "o icone do Python ***")
+
+    identidade = fonte.index("_identidade_no_windows()", fonte.index("def main"))
+    aplicacao = fonte.index("QApplication(sys.argv)")
+    checa(identidade < aplicacao,
+          "*** e a identidade vem ANTES da QApplication: depois de a janela "
+          "existir, o Windows ja' decidiu sob que icone agrupa-la ***")
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -884,6 +961,8 @@ def main() -> int:
     testar_abrir_fecha_o_rascunho_vazio()
     testar_menu_tem_novo()
     testar_log()
+    testar_a_janela_tem_icone()
+    testar_o_app_define_o_icone_e_a_identidade()
     return resumir()
 
 

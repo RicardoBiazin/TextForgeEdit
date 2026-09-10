@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QLabel,
                                QVBoxLayout, QWidget)
 
 from tfedit import janela as janela_viva
+from tfedit import recursos
 from tfedit import seguranca
 from tfedit import (APP, AUTOR, VERSAO, busca, codificacao,
                     configuracao, conversao, linguagens,
@@ -104,6 +105,14 @@ class JanelaPrincipal(QMainWindow):
         super().__init__()
         self.cfg = cfg if cfg is not None else configuracao.carregar()
         self.setWindowTitle(f"TextForgeEdit {VERSAO}")
+        # O icone tambem AQUI, e nao so' no `app.py`. A `QApplication` propaga
+        # o dela para as janelas, mas quem monta uma `JanelaPrincipal` sem
+        # passar pelo `app.py` -- a suite, e qualquer outro ponto de entrada --
+        # ficaria sem icone. E e' justamente por o icone estar so' num caminho
+        # sem teste que ele passou treze versoes sem nunca ter sido definido.
+        icone = recursos.icone_do_aplicativo()
+        if not icone.isNull():
+            self.setWindowIcon(icone)
         self.resize(int(self.cfg.get("janela_largura", 1150)),
                     int(self.cfg.get("janela_altura", 780)))
         if self.cfg.get("janela_maximizada"):

@@ -224,6 +224,26 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## O ícone
+
+O `.ico` está embutido no `.exe` pelo PyInstaller desde a primeira versão --
+é por isso que o Explorer sempre mostrou o ícone certo. Mas o recurso do
+executável **só vale para o shell**: a janela que o Qt cria nasce sem ícone até
+alguém chamar `setWindowIcon`, e ninguém chamava. Barra de título e barra de
+tarefas ficavam com o genérico, num programa cujo arquivo no disco tinha o
+ícone certo -- e é justamente esse contraste que fez o defeito durar treze
+versões.
+
+Havia testes de ícone o tempo todo, e eles conferiam o **arquivo**: decodificam
+o `.ico`, medem a espessura dos traços, contam os pixels opacos a 16 px.
+Nenhum perguntava se a **janela** usava. Agora há.
+
+No Windows há uma segunda metade: `setWindowIcon` sozinho não basta. Sem
+registrar um **AppUserModelID** antes da primeira janela, o Windows agrupa a
+janela sob o processo que a criou -- `python.exe`, ao rodar do fonte -- e mostra
+o ícone do Python por mais correto que o `setWindowIcon` esteja. A identidade é
+lida na criação da janela: depois não adianta mais.
+
 ## Ver um CSV/DSV em colunas
 
 Um arquivo separado por `;`, `|`, TAB ou outro caractere é ilegível como texto
