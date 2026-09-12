@@ -74,21 +74,47 @@ def pasta_de_rascunhos() -> pathlib.Path:
     return configuracao.pasta_de_dados() / "rascunhos"
 
 
+def rascunhos_da_sessao() -> set:
+    """Os rascunhos que a sessao guardada promete reabrir.
+
+    Sao intocaveis para a limpeza: um documento novo que o usuario deixou
+    aberto duas semanas e' justamente o que ele espera reencontrar. A limpeza
+    roda ANTES da restauracao no arranque, entao sem esta lista ela apagaria o
+    arquivo instantes antes de ele voltar -- e a aba simplesmente nao
+    reapareceria, sem erro nenhum na tela.
+    """
+    try:
+        from tfedit import sessao as sessao_mod
+
+        return {pathlib.Path(g.caminho).resolve()
+                for g in sessao_mod.ler() if g.sem_titulo}
+    except Exception as erro:              # noqa: BLE001 - nunca derrubar
+        # Uma sessao ilegivel nao pode impedir a limpeza; no maximo ela apaga
+        # um rascunho velho que ninguem ia reabrir mesmo.
+        log.warning("nao deu para ler a sessao na limpeza: %s", erro)
+        return set()
+
+
 def limpar_rascunhos_antigos(dias: int = 7) -> int:
     """Apaga rascunhos que sobraram de um fechamento anormal.
 
     So' os ANTIGOS: um rascunho recente pode ser de outra janela aberta agora
     mesmo -- este editor permite varias instancias quando o canal esta' ocupado.
+
+    E NUNCA os que a sessao vai reabrir, por mais velhos que sejam.
     """
     import time
 
     pasta = pasta_de_rascunhos()
     if not pasta.is_dir():
         return 0
+    poupados = rascunhos_da_sessao()
     limite = time.time() - dias * 86400
     apagados = 0
     for arquivo in pasta.glob("*.txt"):
         try:
+            if arquivo.resolve() in poupados:
+                continue
             if arquivo.stat().st_mtime < limite:
                 arquivo.unlink()
                 apagados += 1
@@ -143,6 +169,10 @@ class Aba(QWidget):
         # configuracao ela apareceria na tela como se fosse uma preferencia,
         # e desligar planilhas para sempre nao e' o que ela significa.
         self.nunca_como_planilha = nunca_como_planilha
+        #: Quando verdadeiro, `encerrar()` NAO apaga o arquivo de rascunho.
+        #: Quem fecha e' que sabe se o documento vai voltar: fechar a janela
+        #: guarda para a proxima partida; fechar a aba com o X descarta.
+        self.guardar_ao_encerrar = False
         self.caminho = pathlib.Path(caminho)
         self.tema = tema
         self.planilha = None
@@ -356,6 +386,39 @@ class Aba(QWidget):
     def e_rascunho(self) -> bool:
         """Documento novo que ainda nao foi salvo em lugar nenhum."""
         return bool(self.sem_titulo)
+
+    def guardar_rascunho(self) -> int:
+        """Grava o texto NO PROPRIO arquivo de rascunho, sem deixar de ser um.
+
+        E' o que torna desnecessario perguntar "salvar antes de fechar?" num
+        documento novo. O rascunho nasce como um arquivo de ZERO BYTE: o texto
+        digitado vive na tabela de pecas, e nao no disco. Fechar sem perguntar
+        e sem isto perderia tudo -- "manter sem salvar" so' e' seguro se
+        houver onde manter.
+
+        Difere de `salvar` em uma coisa, e e' a coisa toda: `sem_titulo`
+        CONTINUA valendo. O documento nao ganhou endereco por ter sido
+        guardado numa pasta interna, e o proximo Ctrl+S tem de continuar
+        perguntando onde salvar de verdade.
+        """
+        if not self.e_rascunho:
+            return 0
+        self.sincronizar()
+        if not self.documento.alterado:
+            return 0
+
+        nome = self.sem_titulo
+        escritos = self.salvar(str(self.caminho))
+        # Guardou: o arquivo tem de sobreviver ao `encerrar()`.
+        self.guardar_ao_encerrar = True
+        # `salvar` limpa o `sem_titulo` -- ele acabou de gravar num caminho de
+        # verdade, e do ponto de vista dele o documento tem endereco agora.
+        # Aqui ele nao tem: a pasta de rascunhos nao e' um lugar que o usuario
+        # escolheu, nem um que ele saiba encontrar.
+        self.sem_titulo = nome
+        self.titulo_mudou.emit()
+        log.info("rascunho %s guardado (%d bytes)", nome, escritos)
+        return escritos
 
     @property
     def rascunho_intocado(self) -> bool:
@@ -743,9 +806,15 @@ class Aba(QWidget):
             self.remover_view(nome)
         if self.original is not None:
             self.original.fechar()
-        if self.e_rascunho:
+        if self.e_rascunho and not self.guardar_ao_encerrar:
             # O arquivo temporario morre com a aba. Depois do `fechar()`: no
             # Windows o mmap SEGURA o arquivo, e apagar antes falharia.
+            #
+            # `guardar_ao_encerrar` e' o que permite o rascunho reaparecer na
+            # proxima partida: sem ele, o texto era gravado no arquivo e o
+            # arquivo era apagado uma linha depois -- a sessao voltaria
+            # apontando para um caminho que nao existe mais, e a aba
+            # simplesmente nao reapareceria.
             try:
                 self.caminho.unlink(missing_ok=True)
             except OSError:

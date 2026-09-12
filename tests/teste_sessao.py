@@ -27,7 +27,8 @@ import sys
 import time
 
 from ajudantes import (appdata_temporario, checa, checa_igual,
-                       pasta_temporaria, preparar_qt, pular, resumir, secao)
+                       drenar_eventos, pasta_temporaria, preparar_qt, pular,
+                       resumir, secao)
 
 TEM_QT = preparar_qt()
 
@@ -320,6 +321,146 @@ def testar_canal_orfao() -> None:
     servidor.parar()
 
 
+
+def _sem_perguntar(monitor: list):
+    """Troca o QMessageBox.question por um espiao que NUNCA responde.
+
+    Qualquer pergunta durante o fechamento cai aqui e e' registrada. E' o
+    coracao deste teste: um `question` de verdade travaria a suite esperando
+    um clique, e um que responde "descartar" esconderia justamente o defeito
+    que se quer vigiar.
+    """
+    from PySide6.QtWidgets import QMessageBox
+
+    original = QMessageBox.question
+
+    def espiao(*args, **_kwargs):
+        monitor.append(args[2] if len(args) > 2 else "?")
+        return QMessageBox.StandardButton.Discard
+
+    QMessageBox.question = staticmethod(espiao)
+    return original
+
+
+def testar_documento_novo_nao_pergunta_e_volta() -> None:
+    """PEDIDO: um documento novo nao pergunta ao fechar, e reaparece depois.
+
+    O que tornava isso possivel ja' estava pronto desde a v0.10.0: um
+    documento novo nasce como ARQUIVO de verdade numa pasta interna. O que
+    faltava e' que ele nascia com ZERO BYTE -- o texto digitado vive na tabela
+    de pecas, nao no disco. Fechar sem perguntar, sem guardar antes, perderia
+    tudo em silencio, que e' pior que a caixa de dialogo.
+    """
+    secao("*** Documento novo: nao pergunta ao fechar, e volta depois ***")
+
+    from PySide6.QtWidgets import QMessageBox
+    from tfedit import sessao as sessao_mod
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    TEXTO = "anotação que não foi salva em lugar nenhum"
+
+    perguntas: list = []
+    original = _sem_perguntar(perguntas)
+    try:
+        janela = JanelaPrincipal({"restaurar_sessao": True})
+        checa(janela.novo(), "cria o documento novo")
+        aba = janela.aba_atual
+        nome = aba.nome
+        caminho = pathlib.Path(aba.caminho)
+        checa(aba.e_rascunho, f"e ele e' um rascunho: {nome!r}")
+        checa_igual(caminho.stat().st_size, 0,
+                    "*** que nasce com ZERO BYTE: o texto ainda nao esta' no "
+                    "disco ***")
+
+        aba.editor.insertPlainText(TEXTO)
+        aba.editor.sincronizar()
+        checa(aba.modificado, "com texto digitado e nao salvo")
+
+        # Fecha o PROGRAMA.
+        janela.close()
+        drenar_eventos()
+
+        checa_igual(perguntas, [],
+                    f"*** NENHUMA pergunta ao fechar: nao ha' o que perder, "
+                    f"entao nao ha' o que perguntar. Perguntou: "
+                    f"{perguntas} ***")
+        checa(caminho.stat().st_size > 0,
+              f"*** e o texto FOI para o disco ({caminho.stat().st_size} "
+              f"bytes): 'manter sem salvar' so' e' seguro se houver onde "
+              f"manter ***")
+
+        guardadas = sessao_mod.ler()
+        rascunhos = [g for g in guardadas if g.sem_titulo]
+        checa_igual([g.sem_titulo for g in rascunhos], [nome],
+                    "*** e a sessao guardou o rascunho, com o nome ***")
+
+        # Abre de novo: ele reaparece.
+        outra = JanelaPrincipal({"restaurar_sessao": True})
+        try:
+            checa_igual(outra.restaurar_sessao(), 1, "uma aba voltou")
+            volta = outra.aba_atual
+            checa_igual(volta.nome, nome,
+                        f"*** com o MESMO nome, {nome!r}, e nao o caminho da "
+                        f"pasta interna ***")
+            checa(volta.e_rascunho,
+                  "*** e ainda e' um rascunho: o proximo Ctrl+S continua "
+                  "perguntando onde salvar, em vez de gravar escondido ***")
+            conteudo = volta.documento.ler(0, volta.documento.tamanho)
+            checa(TEXTO.encode() in conteudo,
+                  f"*** e o texto voltou inteiro ***")
+        finally:
+            outra.close()
+            drenar_eventos()
+    finally:
+        QMessageBox.question = original
+
+
+def testar_rascunho_da_sessao_escapa_da_limpeza() -> None:
+    """A limpeza roda ANTES da restauracao, e nao pode levar o rascunho junto.
+
+    Sem esta protecao, um documento novo deixado aberto mais de uma semana
+    seria apagado instantes antes de voltar -- e a aba simplesmente nao
+    reapareceria, sem erro nenhum na tela. Justamente o rascunho mais
+    valioso: o que a pessoa manteve por mais tempo.
+    """
+    secao("*** O rascunho da sessao escapa da limpeza por idade ***")
+
+    import os
+    import time
+
+    from tfedit.interface.aba import (limpar_rascunhos_antigos,
+                                      pasta_de_rascunhos, rascunhos_da_sessao)
+    from tfedit import sessao as sessao_mod
+
+    pasta = pasta_de_rascunhos()
+    pasta.mkdir(parents=True, exist_ok=True)
+    guardado = pasta / "teste-guardado.txt"
+    perdido = pasta / "teste-perdido.txt"
+    guardado.write_text("texto que a sessao promete reabrir", encoding="utf-8")
+    perdido.write_text("orfao de um fechamento anormal", encoding="utf-8")
+
+    # Os dois com 30 dias: a IDADE e' igual, so' a sessao os distingue.
+    antigo = time.time() - 30 * 86400
+    os.utime(guardado, (antigo, antigo))
+    os.utime(perdido, (antigo, antigo))
+
+    sessao_mod.gravar([sessao_mod.AbaGuardada(
+        caminho=str(guardado), sem_titulo="Sem título 1")])
+    try:
+        checa(guardado.resolve() in rascunhos_da_sessao(),
+              "a sessao promete reabrir o primeiro")
+        limpar_rascunhos_antigos(dias=7)
+
+        checa(guardado.is_file(),
+              "*** o rascunho da sessao SOBREVIVEU, com 30 dias ***")
+        checa(not perdido.is_file(),
+              "*** e o orfao da mesma idade foi apagado: a diferenca e' a "
+              "sessao, e nao a idade ***")
+    finally:
+        sessao_mod.esquecer()
+        guardado.unlink(missing_ok=True)
+        perdido.unlink(missing_ok=True)
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 não está instalado")
@@ -331,6 +472,8 @@ def main() -> int:
     testar_entrega_entre_processos()
     testar_sem_ninguem_escutando()
     testar_canal_orfao()
+    testar_documento_novo_nao_pergunta_e_volta()
+    testar_rascunho_da_sessao_escapa_da_limpeza()
     return resumir()
 
 

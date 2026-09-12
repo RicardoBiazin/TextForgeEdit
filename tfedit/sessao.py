@@ -47,6 +47,11 @@ class AbaGuardada:
 
     caminho: str
     linha: int = 0
+    #: Nome do documento novo ("Sem título 1"), quando a aba era um RASCUNHO.
+    #: Vazio para um arquivo comum. Sem isto o rascunho voltaria mostrando o
+    #: caminho interno como nome, e o Ctrl+S seguinte gravaria escondido nessa
+    #: pasta em vez de perguntar onde salvar.
+    sem_titulo: str = ""
     #: Diário de edições pendentes. Vazio quando não havia nada por salvar.
     diario: dict = field(default_factory=dict)
     assinatura: dict = field(default_factory=dict)
@@ -90,6 +95,7 @@ def capturar(abas) -> list[AbaGuardada]:
             guardada = AbaGuardada(
                 caminho=str(aba.caminho),
                 linha=int(aba.editor.linha_atual_no_documento()),
+                sem_titulo=getattr(aba, "sem_titulo", "") or "",
                 assinatura=_assinatura_como_dicionario(aba.original.assinatura))
             if documento.alterado:
                 guardada.diario = documento.diario()
@@ -109,6 +115,7 @@ def gravar(guardadas: list[AbaGuardada]) -> bool:
         "quando": time.time(),
         "abas": [
             {"caminho": g.caminho, "linha": g.linha, "diario": g.diario,
+             "sem_titulo": g.sem_titulo,
              "assinatura": g.assinatura}
             for g in guardadas],
     }
@@ -156,6 +163,7 @@ def ler() -> list[AbaGuardada]:
             continue
         guardadas.append(AbaGuardada(
             caminho=str(bruto["caminho"]),
+            sem_titulo=str(bruto.get("sem_titulo", "")),
             linha=int(bruto.get("linha", 0) or 0),
             diario=dict(bruto.get("diario") or {}),
             assinatura=dict(bruto.get("assinatura") or {})))

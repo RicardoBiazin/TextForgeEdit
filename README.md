@@ -224,6 +224,40 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Documento novo não pergunta, e volta na próxima vez
+
+Um "Sem título" com texto digitado **não pergunta nada ao fechar o programa**.
+Ele é guardado, e reaparece na partida seguinte com o mesmo nome — e ainda como
+rascunho, de modo que o próximo Ctrl+S continua perguntando onde salvar de
+verdade, em vez de gravar escondido numa pasta interna.
+
+O que tornava isso possível já existia desde a v0.10.0: um documento novo nasce
+como **arquivo de verdade** numa pasta interna, e por isso passa pelo mesmo
+caminho de um arquivo de 1 GB. Faltava uma coisa: ele nascia com **zero byte**.
+O texto digitado vive na tabela de peças, não no disco. Fechar sem perguntar e
+sem guardar antes perderia tudo em silêncio — pior que a caixa de diálogo.
+*"Manter sem salvar" só é seguro se houver onde manter.*
+
+### Fechar a janela guarda; fechar a aba descarta
+
+Nenhum dos dois pergunta. A diferença está no destino, e é a leitura natural do
+gesto: fechar a **janela** guarda tudo para a próxima partida; fechar **aquela
+aba** no X é dizer "não quero mais este documento", e guardá-lo para reabrir
+sozinho depois seria devolver o que a pessoa acabou de dispensar. O rodapé diz
+o que aconteceu.
+
+### E a limpeza aprendeu a poupar
+
+Rascunhos órfãos de um fechamento anormal são apagados depois de 7 dias, e essa
+limpeza roda **antes** da restauração no arranque. Sem uma proteção, um
+documento novo deixado aberto duas semanas seria apagado instantes antes de
+voltar — e a aba simplesmente não reapareceria, sem erro nenhum na tela.
+Justamente o rascunho mais valioso: o que a pessoa manteve por mais tempo.
+
+Agora a limpeza consulta a sessão. O teste põe dois rascunhos de **30 dias** na
+pasta, um prometido pela sessão e outro não: sobrevive quem a sessão promete
+reabrir, e a idade não tem voto.
+
 ## Ctrl+End e Ctrl+Home
 
 Vão para o fim e o começo do **documento**, deslizando a janela viva.

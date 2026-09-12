@@ -8,6 +8,7 @@ de uma reescrita.
 from __future__ import annotations
 
 import pathlib
+import re
 
 from PySide6.QtCore import QPoint, QSize, Qt, Signal
 from PySide6.QtGui import (QAction, QActionGroup, QIcon, QKeySequence,
@@ -71,6 +72,17 @@ EDICAO_NA_VIEW = {"undo": "desfazer", "redo": "refazer"}
 #: dados estao todos grudados numa linha so'".
 ROTULO_DA_VIEW = {"texto": "Texto", "hex": "Hexadecimal",
                   "tabela": "Colunas", "planilha": "Planilha"}
+
+
+def _numero_do_rascunho(nome: str) -> int:
+    """O N de "Sem titulo N". Zero quando nao da' para saber.
+
+    Serve para o contador de documentos novos nao repetir um numero que voltou
+    da sessao: dois "Sem titulo 1" na mesma janela seriam dois rascunhos
+    disputando o mesmo arquivo, e o segundo sobrescreveria o primeiro.
+    """
+    casamento = re.search(r"(\d+)\s*$", nome or "")
+    return int(casamento.group(1)) if casamento else 0
 
 
 class _RotuloClicavel(QLabel):
@@ -1002,6 +1014,17 @@ class JanelaPrincipal(QMainWindow):
         voltaram = 0
         recusadas = []
         for guardada in guardadas:
+            if guardada.sem_titulo:
+                # Um documento novo que nunca foi salvo volta como documento
+                # novo: mesmo nome, e o Ctrl+S seguinte continua perguntando
+                # onde salvar. Abri-lo como arquivo comum mostraria o caminho
+                # da pasta interna como nome e gravaria escondido la' dentro.
+                if not self._reabrir_rascunho(guardada):
+                    continue
+                voltaram += 1
+                if guardada.linha:
+                    self.aba_atual.ir_para_linha(guardada.linha)
+                continue
             if not self.abrir_arquivo(guardada.caminho):
                 continue
             aba = self.aba_atual
@@ -1031,6 +1054,27 @@ class JanelaPrincipal(QMainWindow):
         if voltaram:
             log.info("sessão restaurada: %d aba(s)", voltaram)
         return voltaram
+
+    def _reabrir_rascunho(self, guardada) -> bool:
+        """Reabre um "Sem titulo" da sessao anterior. False se nao deu."""
+        try:
+            aba = Aba(guardada.caminho, self.cfg, self, tema=self.tema,
+                      sem_titulo=guardada.sem_titulo)
+        except OSError as erro:
+            log.warning("rascunho %s nao voltou: %s", guardada.caminho, erro)
+            return False
+
+        self._ligar_aba(aba)
+        indice = self.abas.addTab(aba, aba.titulo)
+        self.abas.setTabToolTip(
+            indice, "Documento novo — ainda não salvo em disco")
+        self.abas.setCurrentIndex(indice)
+        # O contador nao pode repetir um numero que voltou: dois "Sem titulo 1"
+        # na mesma janela sao dois rascunhos disputando o mesmo arquivo.
+        self._contador_de_novos = max(self._contador_de_novos,
+                                      _numero_do_rascunho(guardada.sem_titulo))
+        log.info("rascunho restaurado: %s", guardada.sem_titulo)
+        return True
 
     def _guardar_sessao(self) -> None:
         sessao_mod.gravar(sessao_mod.capturar(self.todas_as_abas()))
@@ -1273,7 +1317,23 @@ class JanelaPrincipal(QMainWindow):
         if not isinstance(aba, Aba):
             return False
         aba.sincronizar()
-        if aba.modificado and not self._perguntar_para_fechar(aba):
+        if aba.e_rascunho:
+            # UM DOCUMENTO NOVO NAO PERGUNTA, nem aqui nem ao fechar a janela.
+            #
+            # A diferenca entre os dois esta' no DESTINO, e ela e' a leitura
+            # natural do gesto: fechar a JANELA guarda tudo para a proxima
+            # partida; fechar ESTA aba com o X e' dizer "nao quero mais este
+            # documento". Guarda-lo para reabrir sozinho depois seria devolver
+            # o que a pessoa acabou de dispensar.
+            #
+            # Nada se perde em silencio: o arquivo do rascunho e' apagado, mas
+            # o rodape diz o que aconteceu, e o Ctrl+Z da aba ainda estava la'
+            # ate' o instante do fechamento.
+            if aba.modificado:
+                self.barra.showMessage(
+                    f"{aba.nome} foi descartado. Para guardá-lo, use "
+                    f"Salvar como antes de fechar a aba.", 8000)
+        elif aba.modificado and not self._perguntar_para_fechar(aba):
             return False
         self.abas.removeTab(indice)
         aba.encerrar()
@@ -1291,6 +1351,22 @@ class JanelaPrincipal(QMainWindow):
             self.barra.showMessage("Abra um arquivo (Ctrl+O) ou arraste "
                                    "um para cá")
         return True
+
+    def _guardar_rascunho(self, aba) -> None:
+        """Grava um documento novo no proprio arquivo de rascunho.
+
+        E' o que permite fechar sem perguntar: o texto vai para o disco, e a
+        sessao guarda o caminho. Falhar aqui NAO pode impedir o fechamento --
+        no pior caso perde-se um rascunho, e travar a saida do programa seria
+        pior que isso.
+        """
+        if not getattr(aba, "e_rascunho", False):
+            return
+        try:
+            aba.guardar_rascunho()
+        except Exception as erro:             # noqa: BLE001 - nunca derrubar
+            log.warning("nao deu para guardar o rascunho %s: %s",
+                        aba.nome, erro)
 
     def _perguntar_para_fechar(self, aba: Aba) -> bool:
         resposta = QMessageBox.question(
@@ -1856,10 +1932,14 @@ class JanelaPrincipal(QMainWindow):
         # alterações a sessão guardada ainda registra onde ele estava.
         for aba in self.todas_as_abas():
             aba.sincronizar()
+            # ANTES de capturar a sessao: um rascunho so' volta na proxima
+            # partida se o texto estiver no arquivo. Guardar depois gravaria
+            # a sessao apontando para um arquivo de zero byte.
+            self._guardar_rascunho(aba)
         self._guardar_sessao()
 
         for aba in self.todas_as_abas():
-            if aba.modificado:
+            if aba.modificado and not aba.e_rascunho:
                 self.abas.setCurrentWidget(aba)
                 if not self._perguntar_para_fechar(aba):
                     evento.ignore()
