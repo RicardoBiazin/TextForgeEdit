@@ -199,7 +199,9 @@ def _formatar(texto: str, opcoes: dict, *, indentar: bool,
     if erro is not None:
         return erro
     try:
-        seguranca.conferir_tamanho(texto)
+        seguranca.conferir_tamanho(
+            texto, int(opcoes.get("limite_mb",
+                                  seguranca.LIMITE_DE_ENTRADA_MB)))
     except seguranca.EntradaGrandeDemais as exc:
         return Recusa(str(exc), "Use um formatador de linha de comando para "
                                "arquivos desse tamanho.")

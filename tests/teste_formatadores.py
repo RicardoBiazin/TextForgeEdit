@@ -26,7 +26,8 @@ from __future__ import annotations
 
 import sys
 
-from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
+from ajudantes import (checa, checa_igual, checa_levanta, pasta_temporaria,
+                       preparar_qt,
                        pular, resumir, secao)
 
 TEM_QT = preparar_qt()
@@ -166,48 +167,123 @@ def testar_reformatar_e_no_op() -> None:
             _encerrar(janela)
 
 
-def testar_teto_desabilita_o_comando() -> None:
-    secao("*** Acima do teto, o comando vem desabilitado com o motivo ***")
+def testar_sem_teto_formata_de_qualquer_tamanho() -> None:
+    """O padrao passou a ser SEM TETO, a pedido do usuario.
 
-    from tfedit import seguranca
+    Antes, `seguranca.LIMITE_DE_ENTRADA_MB` era a constante 64 e nao havia
+    como o usuario muda-la. Agora ela e' o padrao de uma chave de
+    configuracao, e ZERO DESLIGA A CHECAGEM. O custo nao sumiu -- formatar
+    constroi a arvore inteira na memoria --, o que mudou e' de quem e' a
+    decisao.
+    """
+    secao("*** Sem teto (0), formatar nunca e' recusado por tamanho ***")
+
+    from tfedit import configuracao, seguranca
+
+    checa_igual(int(configuracao.padrao()["limite_formatar_mb"]), 0,
+                "*** o padrao de fabrica e' SEM LIMITE ***")
+    checa(seguranca.LIMITE_DE_ENTRADA_MB <= 0,
+          f"e a constante do modulo tambem: "
+          f"{seguranca.LIMITE_DE_ENTRADA_MB}")
+
+    # A checagem de dentro tambem tem de estar desligada: `de_json` e `de_xml`
+    # conferem o tamanho POR DENTRO, e se so' o menu tivesse sido liberado a
+    # recusa viria depois do clique -- com o comando habilitado, que e' o pior
+    # dos dois mundos.
+    grande = "x" * (2 * 1024 * 1024)
+    seguranca.conferir_tamanho(grande, 0)
+    checa(True, "*** `conferir_tamanho` com 0 nao levanta em 2 MB ***")
+    checa_levanta(seguranca.EntradaGrandeDemais,
+                  lambda: seguranca.conferir_tamanho(grande, 1),
+                  "e com 1 MB levanta: o mecanismo continua inteiro")
 
     with pasta_temporaria() as pasta:
         janela, _ = _janela_com(pasta, "f.json", b'{"a":1}\r\n')
         try:
             aba = janela.aba_atual
             checa(janela._por_que_nao_formata(aba) is None,
-                  "um arquivo pequeno formata")
+                  "e nenhum arquivo e' recusado por tamanho")
+        finally:
+            _encerrar(janela)
 
-            teto = seguranca.LIMITE_DE_ENTRADA_MB
-            seguranca.LIMITE_DE_ENTRADA_MB = 0
-            try:
-                motivo = janela._por_que_nao_formata(aba)
-                checa(motivo and "limite para formatar" in motivo,
-                      f"*** acima do teto, o motivo e' explicito: "
-                      f"{motivo!r} ***")
 
-                janela._ajustar_menu_formatar()
-                acoes = [a for a in janela.menu_formatar.actions()
-                         if not a.isSeparator()]
-                checa(acoes and not any(a.isEnabled() for a in acoes),
-                      "*** e as acoes do menu vem DESABILITADAS ***")
-                checa(all(motivo in a.toolTip() for a in acoes),
-                      "com o motivo na dica de cada uma")
+def testar_teto_explicito_desabilita_o_comando() -> None:
+    """Quem QUISER o teto de volta poe um numero, e ele volta inteiro.
 
-                # E nao tenta mesmo se for chamado direto.
-                janela.formatar_documento()
-                checa(not aba.documento.alterado,
-                      "*** chamado direto, tambem nao formata ***")
-            finally:
-                seguranca.LIMITE_DE_ENTRADA_MB = teto
+    Tirar o teto nao podia virar tirar o mecanismo: ele e' o que protege quem
+    manda formatar um JSON de 3 GB numa maquina de 8 GB. O arquivo aqui passa
+    de 1 MB DE VERDADE -- e' o caminho real, e nao um atalho por constante.
+    """
+    secao("*** Com um teto explicito, o comando vem desabilitado ***")
+
+    with pasta_temporaria() as pasta:
+        # Um JSON acima de 1 MB, e valido.
+        itens = ",".join(f'"c{i}":{i}' for i in range(120_000))
+        dados = ("{" + itens + "}").encode()
+        checa(len(dados) > 1024 * 1024,
+              f"o JSON de teste tem {len(dados) / (1024 * 1024):.1f} MB")
+
+        janela, _ = _janela_com(pasta, "g.json", dados)
+        try:
+            aba = janela.aba_atual
+            janela.cfg = {**janela.cfg, "limite_formatar_mb": 1}
+
+            motivo = janela._por_que_nao_formata(aba)
+            checa(motivo and "limite para formatar" in motivo,
+                  f"*** acima do teto, o motivo e' explicito: {motivo!r} ***")
+            checa(motivo and "Configurações" in motivo,
+                  "*** e diz ONDE mudar: uma recusa sem saida e' parede ***")
 
             janela._ajustar_menu_formatar()
             acoes = [a for a in janela.menu_formatar.actions()
                      if not a.isSeparator()]
+            checa(acoes and not any(a.isEnabled() for a in acoes),
+                  "*** e as acoes do menu vem DESABILITADAS ***")
+            checa(all(motivo in (a.toolTip() or "") for a in acoes),
+                  "com o motivo na dica de cada uma")
+
+            # E nao tenta mesmo se for chamado direto.
+            janela.formatar_documento()
+            checa(not aba.documento.alterado,
+                  "*** chamado direto, tambem nao formata ***")
+
+            # Zerado, volta a valer.
+            janela.cfg = {**janela.cfg, "limite_formatar_mb": 0}
+            janela._ajustar_menu_formatar()
+            acoes = [a for a in janela.menu_formatar.actions()
+                     if not a.isSeparator()]
             checa(all(a.isEnabled() for a in acoes),
-                  "e volta a ficar habilitado abaixo do teto")
+                  "*** e com 0 volta a ficar habilitado ***")
         finally:
             _encerrar(janela)
+
+
+def testar_o_limite_chega_ao_formatador() -> None:
+    """O teto tem de ATRAVESSAR ate' o motor, e nao parar no menu.
+
+    `de_json` e `de_xml` conferem o tamanho por dentro. Enquanto eles liam a
+    constante do modulo, liberar so' o menu deixaria o comando habilitado e a
+    recusa apareceria depois do clique. Este teste passa o limite pelas
+    OPCOES, que e' o caminho que a janela usa.
+    """
+    secao("*** O limite atravessa das opcoes ate' o motor ***")
+
+    from tfedit.formatadores import de_json, de_xml
+
+    grande_json = "{" + ",".join(f'"c{i}":{i}' for i in range(120_000)) + "}"
+    grande_xml = "<r>" + "".join(f"<i>{i}</i>" for i in range(120_000)) + "</r>"
+    checa(len(grande_json) > 1024 * 1024, "o JSON de teste passa de 1 MB")
+    checa(len(grande_xml) > 1024 * 1024, "e o XML tambem")
+
+    for nome, motor, texto in (("de_json", de_json, grande_json),
+                               ("de_xml", de_xml, grande_xml)):
+        apertado = motor.FORMATADOR.formatar(texto, {"limite_mb": 1})
+        checa(not apertado.ok,
+              f"*** {nome}: com limite 1 MB nas opcoes, RECUSA ***")
+        solto = motor.FORMATADOR.formatar(texto, {"limite_mb": 0})
+        checa(solto.ok,
+              f"*** {nome}: com 0 nas opcoes, formata os "
+              f"{len(texto) / (1024 * 1024):.1f} MB ***")
 
 
 def testar_sem_formatador_explica() -> None:
@@ -331,7 +407,9 @@ def main() -> int:
     testar_motores_formatam()
     testar_formatar_e_uma_operacao()
     testar_reformatar_e_no_op()
-    testar_teto_desabilita_o_comando()
+    testar_sem_teto_formata_de_qualquer_tamanho()
+    testar_teto_explicito_desabilita_o_comando()
+    testar_o_limite_chega_ao_formatador()
     testar_sem_formatador_explica()
     testar_erro_de_sintaxe_aponta_a_linha()
     testar_formatar_selecao()

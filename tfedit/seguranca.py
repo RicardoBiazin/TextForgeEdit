@@ -39,9 +39,12 @@ log = log_interno.obter(__name__)
 # recursao mesmo com as entidades desligadas.
 PROFUNDIDADE_MAXIMA = 5000
 
-# Teto de entrada para operacoes que constroem arvore. Alem disso a operacao e'
-# recusada com aviso, em vez de consumir a memoria da maquina.
-LIMITE_DE_ENTRADA_MB = 64
+# Teto de entrada para operacoes que constroem arvore, em MB. ZERO OU MENOS
+# DESLIGA A CHECAGEM -- e' o padrao desde que o usuario pediu para abrir o
+# arquivo inteiro por maior que seja. O custo nao sumiu: formatar constroi a
+# arvore toda na memoria, e num arquivo grande o processo pode ficar minutos
+# sem responder ou acabar sem memoria. O que mudou e' de quem e' a decisao.
+LIMITE_DE_ENTRADA_MB = 0
 
 # Teto de digitos de um literal inteiro em JSON. O proprio Python levanta
 # ValueError acima de 4300 digitos; capturamos para virar mensagem, nao traceback.
@@ -65,7 +68,9 @@ class EntradaGrandeDemais(ValueError):
 
 
 def conferir_tamanho(texto: str, limite_mb: int = LIMITE_DE_ENTRADA_MB) -> None:
-    """Levanta `EntradaGrandeDemais` acima do teto."""
+    """Levanta `EntradaGrandeDemais` acima do teto. Zero ou menos nao confere."""
+    if limite_mb <= 0:
+        return
     # Aproximacao por caractere e' suficiente e barata: codificar 64 MB so' para
     # medir custaria mais que a checagem vale.
     if len(texto) > limite_mb * 1024 * 1024:

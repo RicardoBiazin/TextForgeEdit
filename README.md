@@ -224,6 +224,59 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Sem tetos de tamanho
+
+Formatar, abrir planilha e comparar **não recusam mais por tamanho**. Os três
+tetos viraram configuração com **zero = sem limite**, e zero é o padrão de
+fábrica:
+
+| | antes | agora |
+|---|---|---|
+| Formatar | 64 MB, constante no código | sem limite |
+| Planilha `.xlsx` | 100 MB | sem limite |
+| Comparar | 500 mil linhas | sem limite |
+
+O custo continua real — cada uma dessas operações traz o conteúdo inteiro para
+a memória, e não existe versão em *streaming* delas. O que mudou é de quem é a
+decisão. Quem quiser a proteção de volta põe um número em
+`Configurações → Limites`, e o mecanismo inteiro volta a valer: o comando fica
+desabilitado com o motivo na dica, e a recusa diz onde mudar.
+
+O teto de formatar precisou **atravessar até o motor**. `de_json` e `de_xml`
+conferem o tamanho por dentro; liberar só o menu deixaria o comando habilitado
+e a recusa apareceria depois do clique — o pior dos dois mundos.
+
+E o `0` de `limite_planilha_mb` significava **"nunca abrir como planilha"** —
+o oposto de "sem limite". Era assim que a janela reabria um `.xlsx` inválido
+como texto. Virou parâmetro do construtor da aba, que é o que sempre foi: uma
+decisão daquela aba, e não uma preferência. Sem isso, a recuperação de um
+arquivo corrompido viraria um laço.
+
+### O que travava de verdade
+
+Tirar o teto de formatar só serve se o arquivo abrir. E um JSON minificado —
+exatamente o arquivo que se abre para mandar formatar — é **uma linha só**.
+Medido: 271 KB numa linha levavam **42 segundos** para abrir; 1,7 MB não
+terminavam. Um arquivo de 2,3 MB repartido em linhas abria em 0,2 s. O tamanho
+nunca foi o problema; a linha era.
+
+A causa foi uma regressão introduzida na v0.14.0 junto com o aviso "parece uma
+tabela": ele passou a chamar a detecção de dialeto em **todo** arquivo ao fim
+da varredura, e o `csv.Sniffer` do Python roda um `re.findall` cujo custo
+explode em linha longa. Antes, isso só rodava ao abrir o menu `Visualizar`.
+
+A amostra passou a truncar cada linha em 4096 caracteres. Não piora detecção
+nenhuma — um separador de CSV se identifica nos primeiros campos, não no fim da
+linha, e há teste com um CSV de linhas longas provando que ele continua sendo
+reconhecido. **42,7 s → 0,07 s**, e o arquivo de 1,7 MB passou a abrir em 0,40 s.
+
+De quebra: um arquivo de **uma linha só** não é mais considerado tabela. O
+princípio do módulo é escolher o separador pela consistência *entre as linhas*,
+e com uma linha apenas toda contagem é trivialmente consistente — um JSON
+minificado saía de lá como "tabela de 393 colunas, confiança 100". A escolha
+manual do separador continua funcionando numa linha só: a dúvida era da
+heurística, não sua.
+
 ## O ícone
 
 O `.ico` está embutido no `.exe` pelo PyInstaller desde a primeira versão --

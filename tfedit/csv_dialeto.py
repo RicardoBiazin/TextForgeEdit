@@ -73,6 +73,20 @@ ROTULO_DO_DELIMITADOR = {
 #: Quantas linhas olhar para decidir. Mais que isto nao melhora e custa.
 LINHAS_DE_AMOSTRA = 50
 
+#: TETO DE CARACTERES POR LINHA na amostra, e ele NAO e' cosmetico.
+#:
+#: O `csv.Sniffer` do Python roda um `re.findall` cujo custo explode em linha
+#: longa. MEDIDO: um JSON minificado de 271 KB numa linha so' fazia a deteccao
+#: levar 42 s -- 10 s so' no `findall` para 10 mil itens, e crescendo muito
+#: mais que o dobro a cada dobro de tamanho. O arquivo abria; a janela e' que
+#: ficava parada.
+#:
+#: E nenhuma dessas 271 KB ajudava a decidir: um separador de CSV se
+#: identifica nos primeiros campos. Cortar a linha nao piora a deteccao de
+#: arquivo nenhum -- um CSV de verdade com linhas de 4 KB e' patologico, e
+#: nesse caso os 4 KB iniciais decidem igual.
+CARACTERES_POR_LINHA_NA_AMOSTRA = 4096
+
 #: Fracao minima de linhas que precisam concordar na contagem do delimitador.
 CONCORDANCIA_MINIMA = 0.8
 
@@ -230,10 +244,17 @@ def _pontuar(linhas: list[str], delimitador: str,
 
 
 def _linhas_de_amostra(texto: str) -> list[str]:
+    """As primeiras linhas uteis, CADA UMA TRUNCADA.
+
+    O truncamento e' o que impede uma linha gigante de travar a deteccao --
+    ver `CARACTERES_POR_LINHA_NA_AMOSTRA`. Ele vale para tudo o que le a
+    amostra, e nao so' para o `Sniffer`: `_contar_fora_de_aspas` tambem
+    percorre a linha caractere a caractere, uma vez por candidato.
+    """
     linhas = []
     for linha in texto.split("\n"):
         if linha.strip():
-            linhas.append(linha)
+            linhas.append(linha[:CARACTERES_POR_LINHA_NA_AMOSTRA])
         if len(linhas) >= LINHAS_DE_AMOSTRA:
             break
     return linhas
@@ -353,6 +374,17 @@ def detectar(texto: str, aspas: str = '"') -> Dialeto:
     linhas = _linhas_de_amostra(texto)
     if not linhas:
         return Dialeto(colunas=0, confianca=0, como_decidiu="arquivo vazio")
+
+    # UMA LINHA SO' NAO E' TABELA, e a razao esta' no cabecalho deste modulo:
+    # o delimitador e' escolhido pela CONSISTENCIA ENTRE AS LINHAS. Com uma
+    # linha apenas, toda contagem e' trivialmente consistente e qualquer
+    # caractere frequente ganha -- um JSON minificado saia daqui como "tabela
+    # de 393 colunas, confianca 100" por causa das virgulas.
+    if len(linhas) < 2:
+        return Dialeto(delimitador=";", aspas=aspas, tem_cabecalho=False,
+                       colunas=1, confianca=20,
+                       como_decidiu="uma linha só: não há consistência "
+                                    "entre linhas para comparar")
 
     melhor = ";"
     melhor_nota = 0

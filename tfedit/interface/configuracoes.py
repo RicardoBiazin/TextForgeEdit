@@ -196,7 +196,12 @@ class Configuracoes(QDialog):
         fora = QVBoxLayout(pagina)
 
         aviso = QLabel(
-            "Estes limites são lidos ao ABRIR um arquivo. Mudá-los vale para "
+            "Zero em qualquer um destes significa <b>sem limite</b>: a "
+            "operação é feita por maior que seja o arquivo, sem perguntar. "
+            "Cada uma delas traz o conteúdo inteiro para a memória — sem "
+            "limite, um arquivo muito grande pode deixar o programa parado "
+            "por minutos.<br><br>"
+            "Os de leitura são lidos ao ABRIR um arquivo: mudá-los vale para "
             "os próximos arquivos abertos, e não para os que já estão nas "
             "abas.", pagina)
         aviso.setWordWrap(True)
@@ -230,15 +235,39 @@ class Configuracoes(QDialog):
         forma.addRow("&Realce até:", self.realce_mb)
 
         self.planilha_mb = QSpinBox(grupo)
-        self.planilha_mb.setRange(0, 2048)
+        self.planilha_mb.setRange(0, 8192)
         self.planilha_mb.setSuffix(" MB")
-        self.planilha_mb.setSpecialValueText("nunca abrir como planilha")
-        self.planilha_mb.setValue(int(self.cfg.get("limite_planilha_mb", 100)))
+        self.planilha_mb.setSpecialValueText("sem limite")
+        self.planilha_mb.setValue(int(self.cfg.get("limite_planilha_mb", 0)))
         self.planilha_mb.setToolTip(
-            "Uma planilha vai INTEIRA para a memória: acima deste tamanho o\n"
-            ".xlsx abre como arquivo comum, onde as garantias de memória do\n"
-            "editor voltam a valer.")
+            "Uma planilha vai INTEIRA para a memória. Sem limite, um .xlsx\n"
+            "de qualquer tamanho abre como grade — pode demorar e consumir\n"
+            "muita memória. Com um número, acima dele o arquivo abre como\n"
+            "arquivo comum, onde as garantias de memória do editor valem.")
         forma.addRow("&Planilha até:", self.planilha_mb)
+
+        self.formatar_mb = QSpinBox(grupo)
+        self.formatar_mb.setRange(0, 8192)
+        self.formatar_mb.setSuffix(" MB")
+        self.formatar_mb.setSpecialValueText("sem limite")
+        self.formatar_mb.setValue(int(self.cfg.get("limite_formatar_mb", 0)))
+        self.formatar_mb.setToolTip(
+            "Formatar exige o texto INTEIRO na memória: os formatadores\n"
+            "recebem e devolvem uma string, e não há versão em streaming.\n"
+            "Sem limite, formatar um arquivo muito grande pode deixar o\n"
+            "programa minutos sem responder.")
+        forma.addRow("&Formatar até:", self.formatar_mb)
+
+        self.comparacao = QSpinBox(grupo)
+        self.comparacao.setRange(0, 100_000_000)
+        self.comparacao.setSingleStep(100_000)
+        self.comparacao.setSpecialValueText("sem limite")
+        self.comparacao.setValue(int(self.cfg.get("limite_de_comparacao", 0)))
+        self.comparacao.setToolTip(
+            "Linhas por arquivo ao comparar. O alinhamento é por âncoras de\n"
+            "linha única, mas um arquivo em que quase toda linha se repete\n"
+            "não tem âncora, e aí o custo volta a crescer.")
+        forma.addRow("&Comparar até:", self.comparacao)
 
         fora.addWidget(grupo)
         fora.addStretch(1)
@@ -277,6 +306,8 @@ class Configuracoes(QDialog):
         novo["limite_de_substituicoes"] = self.substituicoes.value()
         novo["limite_realce_mb"] = self.realce_mb.value()
         novo["limite_planilha_mb"] = self.planilha_mb.value()
+        novo["limite_formatar_mb"] = self.formatar_mb.value()
+        novo["limite_de_comparacao"] = self.comparacao.value()
 
         if self._botoes_disponiveis:
             novo["botoes_da_barra"] = [

@@ -332,6 +332,89 @@ def testar_rotulos_cobrem_todo_candidato() -> None:
         checa(oferecido in cd.ROTULO_DO_DELIMITADOR,
               f"*** a caixa de selecao nao mostra {oferecido!r} sem nome ***")
 
+
+def testar_linha_gigante_nao_trava_a_deteccao() -> None:
+    """Uma linha enorme nao pode fazer a deteccao levar minutos.
+
+    REGRESSAO QUE EU INTRODUZI NA v0.14.0. O aviso "parece uma tabela" passou
+    a chamar `dialeto_csv()` em TODO arquivo ao fim da varredura; antes, isso
+    so' rodava quando alguem abria o menu Visualizar, e um arquivo de uma
+    linha so' nunca passava por ali. E o `csv.Sniffer` do Python roda um
+    `re.findall` cujo custo explode em linha longa: MEDIDO, um JSON minificado
+    de 271 KB numa linha fazia a abertura levar 42 s, e um de 1,7 MB nao
+    terminava. O arquivo abria; a janela e' que ficava parada -- e um JSON
+    minificado e' exatamente o arquivo que alguem abre para mandar FORMATAR.
+
+    Medido depois do corte: 0,07 s e 0,40 s.
+    """
+    secao("*** Uma linha gigante nao trava a deteccao de dialeto ***")
+
+    import time
+
+    minificado = "{" + ",".join(f'"c{i}":{i}' for i in range(120_000)) + "}"
+    checa(len(minificado) > 1_500_000,
+          f"o JSON de teste tem {len(minificado) / 1048576:.1f} MB numa "
+          f"linha so'")
+
+    inicio = time.monotonic()
+    dialeto = cd.detectar(minificado)
+    gasto = time.monotonic() - inicio
+    checa(gasto < 2.0,
+          f"*** detectar levou {gasto:.2f}s -- antes do corte por linha, um "
+          f"arquivo deste tamanho nao terminava ***")
+
+    # A amostra corta a linha, e o corte tem de estar la'.
+    linhas = cd._linhas_de_amostra(minificado)
+    checa(linhas and len(linhas[0]) == cd.CARACTERES_POR_LINHA_NA_AMOSTRA,
+          f"*** a linha da amostra vem truncada em "
+          f"{cd.CARACTERES_POR_LINHA_NA_AMOSTRA} caracteres ***")
+
+    # E CORTAR NAO PIORA A DETECCAO: um CSV de verdade com linhas longas
+    # continua sendo reconhecido, porque o separador se identifica nos
+    # primeiros campos, e nao no fim da linha.
+    largo = "\n".join(
+        ";".join(f"campo{c}valor{'x' * 200}" for c in range(40))
+        for _ in range(10))
+    checa(len(largo.split("\n")[0]) > cd.CARACTERES_POR_LINHA_NA_AMOSTRA,
+          "a linha deste CSV passa do corte")
+    checa_igual(cd.detectar(largo).delimitador, ";",
+                "*** e ele continua sendo reconhecido ***")
+
+
+def testar_uma_linha_so_nao_e_tabela() -> None:
+    """Com uma linha apenas, "consistencia entre as linhas" nao diz nada.
+
+    E' o principio do modulo inteiro: o delimitador e' escolhido pela
+    consistencia ENTRE AS LINHAS, e nao pela frequencia do caractere. Com uma
+    linha so', toda contagem e' trivialmente consistente e qualquer caractere
+    frequente ganha -- um JSON minificado saia daqui como "tabela de 393
+    colunas, confianca 100" por causa das virgulas, e a janela sugeria abri-lo
+    em colunas.
+    """
+    secao("*** Uma linha so' nao e' tabela ***")
+
+    minificado = "{" + ",".join(f'"c{i}":{i}' for i in range(2_000)) + "}"
+    d = cd.detectar(minificado)
+    checa(d.colunas < 2 or d.confianca < 50,
+          f"*** um JSON minificado NAO vira tabela: {d.delimitador!r}, "
+          f"{d.colunas} coluna(s), confianca {d.confianca} ***")
+    checa("uma linha" in d.como_decidiu,
+          f"e o motivo fica registrado: {d.como_decidiu!r}")
+
+    # DUAS linhas ja' bastam para decidir: o corte e' em "nao ha' o que
+    # comparar", e nao em "arquivo pequeno demais".
+    duas = "nome;cidade;uf\nAna;Blumenau;SC\n"
+    d2 = cd.detectar(duas)
+    checa_igual(d2.delimitador, ";",
+                "*** com duas linhas a deteccao volta a funcionar ***")
+    checa_igual(d2.colunas, 3, "com as tres colunas")
+
+    # E a escolha MANUAL continua valendo numa linha so': quem escolhe sabe.
+    escolhido = cd.com_delimitador("a;b;c;d", ";")
+    checa_igual(escolhido.colunas, 4,
+                "*** e escolhido a' mao, um arquivo de uma linha abre igual: "
+                "a duvida era da heuristica, nao do usuario ***")
+
 def main() -> int:
     testar_csv_brasileiro()
     testar_desempate_pelo_cabecalho()
@@ -346,6 +429,8 @@ def main() -> int:
     testar_separadores_de_sistemas_legados()
     testar_separador_escolhido_a_mao()
     testar_rotulos_cobrem_todo_candidato()
+    testar_linha_gigante_nao_trava_a_deteccao()
+    testar_uma_linha_so_nao_e_tabela()
     return resumir()
 
 

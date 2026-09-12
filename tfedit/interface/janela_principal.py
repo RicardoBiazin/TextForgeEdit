@@ -251,8 +251,11 @@ class JanelaPrincipal(QMainWindow):
                 perfis.append(codificacao.detectar(
                     original.ler(0, codificacao.SONDAGEM)))
 
-            teto = int(self.cfg.get("limite_de_comparacao",
-                                    nucleo.TETO_DE_LINHAS))
+            # 0 ou menos = sem teto. O alinhamento e' por ancoras de linha
+            # unica, e num arquivo em que quase toda linha se repete o custo
+            # volta a crescer -- e' o que o teto protegia. O usuario pediu para
+            # tirar.
+            teto = int(self.cfg.get("limite_de_comparacao", 0))
             comp = nucleo.comparar(documentos[0], documentos[1], teto=teto)
         except nucleo.GrandeDemais as exc:
             for original in abertos:
@@ -447,16 +450,18 @@ class JanelaPrincipal(QMainWindow):
             return (f"Não há formatador para {nome}. Use o menu Linguagem "
                     f"para escolher outra.")
 
-        teto = seguranca.LIMITE_DE_ENTRADA_MB * 1024 * 1024
-        if aba.documento.tamanho > teto:
-            # Formatar exige o documento INTEIRO como texto na memória: os
-            # formatadores recebem `str` e devolvem `str`, e não existe versão
-            # em streaming disso. O teto é o limite honesto dessa técnica.
+        # 0 ou menos = sem limite, e é o padrão. Formatar exige o documento
+        # INTEIRO como texto na memória -- os formatadores recebem `str` e
+        # devolvem `str`, e não existe versão em streaming disso. O teto de
+        # 64 MB era o limite honesto dessa técnica; o usuário pediu para tirar,
+        # e o custo passa a ser dele.
+        limite = int(self.cfg.get("limite_formatar_mb", 0))
+        if limite > 0 and aba.documento.tamanho > limite * 1024 * 1024:
             return (f"O arquivo tem "
                     f"{aba.documento.tamanho / (1024 * 1024):.0f} MB e o "
-                    f"limite para formatar é de "
-                    f"{seguranca.LIMITE_DE_ENTRADA_MB} MB — formatar exige o "
-                    f"texto inteiro na memória.")
+                    f"limite para formatar é de {limite} MB — formatar exige "
+                    f"o texto inteiro na memória. Mude ou zere o limite em "
+                    f"Configurações.")
         return None
 
     def _recusar_formatacao(self, aba) -> bool:
@@ -501,7 +506,11 @@ class JanelaPrincipal(QMainWindow):
 
         QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
         try:
-            opcoes = {"usa_espacos": True,
+            # O limite vai junto: `de_json` e `de_xml` conferem o tamanho
+            # POR DENTRO, e sem isto eles recusariam depois do clique -- com o
+            # menu habilitado, que e' o pior dos dois mundos.
+            opcoes = {"limite_mb": int(self.cfg.get("limite_formatar_mb", 0)),
+                      "usa_espacos": True,
                       "largura": int(self.cfg.get("tabulacao", 4)),
                       "comprimento_de_linha": 100}
             saida = (formatador.compactar(texto, opcoes) if compactando
@@ -1229,8 +1238,8 @@ class JanelaPrincipal(QMainWindow):
                 self, "Não é uma planilha",
                 f"{exc}<br><br>Ele será aberto como arquivo comum.")
             try:
-                aba = Aba(caminho, {**self.cfg, "limite_planilha_mb": 0},
-                          self, tema=self.tema)
+                aba = Aba(caminho, self.cfg, self, tema=self.tema,
+                          nunca_como_planilha=True)
             except OSError as outro:
                 QMessageBox.warning(self, "Não foi possível abrir", str(outro))
                 return False

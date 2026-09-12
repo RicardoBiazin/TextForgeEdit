@@ -199,16 +199,61 @@ def testar_gravacao_e_um_patch_do_zip() -> None:
                     "ordem: o Excel espera [Content_Types].xml primeiro ***")
 
 
-def testar_arquivo_grande_demais_abre_como_texto() -> None:
-    secao("*** Acima do teto, abre como arquivo comum -- e nao falha ***")
+def testar_sem_limite_abre_a_planilha_de_qualquer_tamanho() -> None:
+    """O padrao passou a ser SEM LIMITE, a pedido do usuario.
+
+    Antes, `limite_planilha_mb` valia 100 e um .xlsx maior abria como arquivo
+    comum. O usuario pediu para abrir o arquivo inteiro por maior que seja,
+    sem perguntar -- e o 0, que antes significava "NUNCA como planilha",
+    passou a significar "sem limite". E' o oposto, e por isso este teste
+    existe: se alguem reintroduzir a leitura antiga, a planilha para de abrir.
+    """
+    secao("*** Sem limite (0), a planilha abre em qualquer tamanho ***")
 
     with pasta_temporaria() as pasta:
         alvo = _criar(pasta)
         from tfedit.interface.janela_principal import JanelaPrincipal
 
-        # Teto zero: qualquer planilha passa dele. O caminho exercitado e' o
-        # mesmo de um .xlsx de 200 MB, sem precisar gerar 200 MB.
         janela = JanelaPrincipal({"limite_planilha_mb": 0})
+        try:
+            checa(janela.abrir_arquivo(str(alvo)), "abre")
+            aba = janela.aba_atual
+            checa(aba.e_planilha,
+                  "*** com o limite em 0 ela ABRE como planilha: 0 e' sem "
+                  "limite, e nao 'nunca' ***")
+            checa_igual(getattr(aba, "planilha_grande_demais", 0), 0,
+                        "e nada foi recusado por tamanho")
+        finally:
+            _encerrar(janela)
+
+    # E o padrao de fabrica leva ao mesmo lugar.
+    from tfedit import configuracao
+    checa_igual(int(configuracao.padrao()["limite_planilha_mb"]), 0,
+                "*** o padrao de fabrica e' SEM LIMITE ***")
+
+
+def testar_com_limite_explicito_abre_como_texto() -> None:
+    """Quem QUISER a protecao de volta poe um numero, e ela volta.
+
+    Tirar o teto nao podia virar tirar o mecanismo: e' o mesmo caminho que
+    protege quem abre um .xlsx de 2 GB numa maquina de 8 GB. O arquivo aqui e'
+    gerado acima de 1 MB de verdade -- e' o caminho real, e nao um atalho.
+    """
+    secao("*** Com um teto explicito, acima dele abre como arquivo comum ***")
+
+    with pasta_temporaria() as pasta:
+        # MEDIDO, e nao estimado: o .xlsx e' um ZIP e comprime bem. 30 mil
+        # linhas davam 0,6 MB -- metade do necessario. 60 mil dao 1,14 MB em
+        # 1,2 s; 90 mil dao folga sem custar caro.
+        alvo = _criar(pasta, linhas=90_000)
+        tamanho = alvo.stat().st_size
+        checa(tamanho > 1024 * 1024,
+              f"a planilha de teste tem {tamanho / (1024 * 1024):.1f} MB, "
+              f"acima do teto de 1 MB")
+
+        from tfedit.interface.janela_principal import JanelaPrincipal
+
+        janela = JanelaPrincipal({"limite_planilha_mb": 1})
         try:
             checa(janela.abrir_arquivo(str(alvo)),
                   "o arquivo abre mesmo assim")
@@ -222,6 +267,36 @@ def testar_arquivo_grande_demais_abre_como_texto() -> None:
                   "e a aba registra o motivo")
         finally:
             _encerrar(janela)
+
+
+def testar_xlsx_invalido_reabre_como_texto() -> None:
+    """O `nunca_como_planilha` deixou de ser uma chave de configuracao.
+
+    Ele era dito passando `limite_planilha_mb: 0` -- e' por isso que o 0 nao
+    podia significar "sem limite". Virou parametro do construtor, que e' o que
+    ele sempre foi: decisao DAQUELA aba, e nao preferencia do usuario. Sem
+    este teste, o caminho de recuperacao de um .xlsx corrompido viraria um
+    laco -- o arquivo voltaria a ser tratado como planilha e falharia de novo.
+    """
+    secao("*** nunca_como_planilha e' parametro, e nao configuracao ***")
+
+    from tfedit.interface.aba import Aba
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta)
+        aba = Aba(alvo, {"limite_planilha_mb": 0}, nunca_como_planilha=True)
+        try:
+            checa(not aba.e_planilha,
+                  "*** pedido explicitamente, NAO abre como planilha -- "
+                  "mesmo com o limite em 'sem limite' ***")
+            checa(aba.documento is not None, "e abre como arquivo comum")
+        finally:
+            aba.encerrar()
+
+        from tfedit import configuracao
+        checa("nunca_como_planilha" not in configuracao.padrao(),
+              "*** e nao e' uma chave de configuracao: como preferencia ela "
+              "apareceria na tela como 'desligar planilhas para sempre' ***")
 
 
 def testar_zip_renomeado_e_recusado() -> None:
@@ -404,7 +479,9 @@ def main() -> int:
     testar_salvar_sem_editar_e_identico()
     testar_editar_celula_preserva_o_resto()
     testar_gravacao_e_um_patch_do_zip()
-    testar_arquivo_grande_demais_abre_como_texto()
+    testar_sem_limite_abre_a_planilha_de_qualquer_tamanho()
+    testar_com_limite_explicito_abre_como_texto()
+    testar_xlsx_invalido_reabre_como_texto()
     testar_zip_renomeado_e_recusado()
     testar_menu_so_oferece_a_planilha()
     testar_comando_de_texto_nao_quebra()

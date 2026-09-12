@@ -134,9 +134,15 @@ class Aba(QWidget):
 
     def __init__(self, caminho, cfg: dict | None = None,
                  parent: QWidget | None = None, *, tema=None,
-                 sem_titulo: str = "") -> None:
+                 sem_titulo: str = "",
+                 nunca_como_planilha: bool = False) -> None:
         super().__init__(parent)
         self.cfg = cfg or {}
+        # Decisao DESTA aba, e nao configuracao do usuario: e' como a janela
+        # reabre um .xlsx que nao e' uma planilha valida. Como chave de
+        # configuracao ela apareceria na tela como se fosse uma preferencia,
+        # e desligar planilhas para sempre nao e' o que ela significa.
+        self.nunca_como_planilha = nunca_como_planilha
         self.caminho = pathlib.Path(caminho)
         self.tema = tema
         self.planilha = None
@@ -237,7 +243,19 @@ class Aba(QWidget):
         """
         if self.caminho.suffix.lower() not in EXTENSOES_DE_PLANILHA:
             return False
-        teto = int(self.cfg.get("limite_planilha_mb", 100)) * 1024 * 1024
+        if self.nunca_como_planilha:
+            # Como a janela reabre um .xlsx que NAO e' uma planilha valida.
+            # Antes isto era dito passando `limite_planilha_mb: 0`, o que
+            # tornava impossivel usar o 0 para "sem limite".
+            return False
+
+        # 0 ou menos = SEM LIMITE. Um .xlsx e' lido inteiro para a memoria, e
+        # por isso havia um teto; o usuario pediu para tirar. O custo continua
+        # existindo -- a diferenca e' que a decisao e' dele.
+        limite = int(self.cfg.get("limite_planilha_mb", 0))
+        if limite <= 0:
+            return True
+        teto = limite * 1024 * 1024
         try:
             tamanho = self.caminho.stat().st_size
         except OSError:

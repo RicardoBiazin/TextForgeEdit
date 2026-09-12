@@ -121,10 +121,20 @@ def _prologo(texto: str) -> str:
     return texto[:fim].strip()
 
 
-def _preparar(texto: str) -> tuple[ET.Element, str, list[str]] | Saida:
-    """Valida e monta a arvore. Devolve (raiz, declaracao, avisos) ou a falha."""
+def _preparar(texto: str,
+              limite_mb: int | None = None
+              ) -> tuple[ET.Element, str, list[str]] | Saida:
+    """Valida e monta a arvore. Devolve (raiz, declaracao, avisos) ou a falha.
+
+    `limite_mb` vem das OPCOES do documento, e nao da constante do modulo: o
+    teto passou a ser configuravel, e zero desliga. Sem atravessar ate' aqui,
+    o menu ficaria habilitado e a recusa viria depois do clique -- o pior dos
+    dois mundos.
+    """
+    if limite_mb is None:
+        limite_mb = seguranca.LIMITE_DE_ENTRADA_MB
     try:
-        seguranca.conferir_tamanho(texto)
+        seguranca.conferir_tamanho(texto, limite_mb)
     except seguranca.EntradaGrandeDemais as exc:
         return Recusa(str(exc), "Use uma ferramenta de linha de comando para "
                                "arquivos desse tamanho.")
@@ -170,7 +180,9 @@ def _preparar(texto: str) -> tuple[ET.Element, str, list[str]] | Saida:
 
 def formatar(texto: str, opcoes: dict) -> Saida:
     """Indenta hierarquicamente (o exemplo do requisito 39)."""
-    preparado = _preparar(texto)
+    preparado = _preparar(
+        texto, int(opcoes.get("limite_mb",
+                              seguranca.LIMITE_DE_ENTRADA_MB)))
     if not isinstance(preparado, tuple):
         return preparado
     raiz, declaracao, avisos = preparado
@@ -193,7 +205,9 @@ def formatar(texto: str, opcoes: dict) -> Saida:
 
 def compactar(texto: str, opcoes: dict) -> Saida:
     """Remove a indentacao entre tags, preservando o texto dos elementos."""
-    preparado = _preparar(texto)
+    preparado = _preparar(
+        texto, int(opcoes.get("limite_mb",
+                              seguranca.LIMITE_DE_ENTRADA_MB)))
     if not isinstance(preparado, tuple):
         return preparado
     raiz, declaracao, avisos = preparado

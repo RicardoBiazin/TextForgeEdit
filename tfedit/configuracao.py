@@ -111,8 +111,16 @@ def padrao() -> dict[str, Any]:
         # A diferença não é cosmética: uma chave ausente nunca aparece no
         # arquivo de configuração, então não havia como o usuário mudá-la --
         # `tema` inclusive, que a janela lia com um padrão embutido.
+        # ZERO = SEM LIMITE em todos os tetos de tamanho abaixo. O usuário
+        # pediu para abrir o arquivo inteiro por maior que seja, sem perguntar.
+        # O custo continua real -- cada um destes traz o conteúdo inteiro para
+        # a memória --, e o que mudou é de quem é a decisão. Quem quiser a
+        # proteção de volta põe um número aqui.
+        #
         # Acima disto um .xlsx abre como arquivo comum. Ver `interface/aba.py`.
-        "limite_planilha_mb": 100,
+        "limite_planilha_mb": 0,
+        # Acima disto o comando Formatar fica desabilitado. Ver `seguranca.py`.
+        "limite_formatar_mb": 0,
         # Células lidas de uma planilha antes de ela virar somente leitura.
         "limite_celulas_planilha": 500000,
         # Acima disto o realce de sintaxe desliga: colorir 200 MB pararia a
@@ -124,7 +132,7 @@ def padrao() -> dict[str, Any]:
         # Linhas por arquivo ao comparar. O alinhamento é por âncoras de linha
         # única (ver `comparacao.py`), mas um arquivo em que quase toda linha
         # se repete não tem âncora, e aí o custo volta a crescer.
-        "limite_de_comparacao": 500000,
+        "limite_de_comparacao": 0,
     }
 
 
