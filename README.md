@@ -224,6 +224,22 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Ctrl+End e Ctrl+Home
+
+Vão para o fim e o começo do **documento**, deslizando a janela viva.
+
+Eram da mesma família do Ctrl+Z, e escaparam pelo mesmo motivo: o
+`QPlainTextEdit` só conhece a **fatia**. "Fim do documento", para ele, é o fim
+das 5000 linhas que tem na mão — num arquivo de 200 mil linhas, um lugar
+qualquer no meio. A tecla sempre funcionou; o documento dela é que era o errado.
+
+O Ctrl+Home tinha o mesmo defeito e era mais difícil de notar: a fatia do
+arranque começa na linha 0, então ele acertava por acidente até a primeira vez
+que a fatia deslizava.
+
+O teste manda a **tecla**, e não o método — é a lição que o Ctrl+Z deixou, e a
+sabotagem confirma: sem a correção, o cursor para na linha 5000.
+
 ## Sem tetos de tamanho
 
 Formatar, abrir planilha e comparar **não recusam mais por tamanho**. Os três

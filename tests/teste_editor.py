@@ -18,8 +18,9 @@ from __future__ import annotations
 
 import sys
 
-from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
-                       pular, resumir, secao)
+from ajudantes import (checa, checa_igual, drenar_eventos,
+                       pasta_temporaria, preparar_qt, pular, resumir,
+                       secao)
 
 TEM_QT = preparar_qt()
 
@@ -204,12 +205,84 @@ def testar_margem_e_posicao() -> None:
         encerrar(janela)
 
 
+
+def testar_ctrl_end_vai_ao_fim_do_DOCUMENTO() -> None:
+    """DEFEITO RELATADO: Ctrl+End nao ia para a ultima linha.
+
+    Mesma familia do Ctrl+Z, e escapou pelo mesmo motivo: o `QPlainTextEdit`
+    so' conhece a FATIA. "Fim do documento", para ele, e' o fim das 5000
+    linhas que tem na mao -- que num arquivo de 200 mil linhas e' um lugar
+    qualquer no meio. A tecla sempre funcionou; o documento dela e' que era o
+    errado.
+
+    O teste manda a TECLA, e nao o metodo -- e' a licao que o Ctrl+Z deixou:
+    todos os testes dele chamavam `editor.undo()` e passavam, enquanto a tecla
+    nao fazia nada.
+    """
+    secao("*** Ctrl+End vai ao fim do DOCUMENTO, e nao da fatia ***")
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    def tecla(alvo, chave):
+        QApplication.sendEvent(
+            alvo, QKeyEvent(QKeyEvent.Type.KeyPress, chave,
+                            Qt.KeyboardModifier.ControlModifier))
+
+    with pasta_temporaria() as tmp:
+        # Bem mais que `linhas_da_janela`: a fatia PRECISA deslizar, senao o
+        # defeito nem aparece -- num arquivo pequeno o fim da fatia e' o fim
+        # do documento, e o codigo errado acerta por acidente.
+        LINHAS = 200_000
+        alvo = gerar(tmp, "fim.txt", LINHAS)
+
+        janela = JanelaPrincipal()
+        try:
+            checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
+            checa(esperar_indice(janela), "a varredura termina")
+            aba = janela.aba_atual
+            editor = aba.editor
+            fatia = int(janela.cfg.get("linhas_da_janela", 5000))
+            checa(LINHAS > fatia * 2,
+                  f"{LINHAS} linhas contra uma fatia de {fatia}: ela TEM de "
+                  f"deslizar")
+
+            tecla(editor, Qt.Key.Key_End)
+            drenar_eventos()
+
+            ultima = editor.linha_atual_no_documento()
+            checa_igual(ultima, aba.documento.total_de_linhas - 1,
+                        f"*** o cursor esta' na ULTIMA linha do documento "
+                        f"({ultima}), e nao no fim da fatia ***")
+            checa(ultima > fatia,
+                  f"*** e {ultima} e' bem depois da fatia inicial: antes "
+                  f"desta correcao, Ctrl+End parava perto de {fatia} ***")
+
+            # Ctrl+Home volta ao comeco do DOCUMENTO, e nao da fatia atual --
+            # que agora esta' la' no fim do arquivo.
+            tecla(editor, Qt.Key.Key_Home)
+            drenar_eventos()
+            checa_igual(editor.linha_atual_no_documento(), 0,
+                        "*** e Ctrl+Home volta a' primeira linha do documento: "
+                        "com a fatia deslizada, o 'inicio' do widget era uma "
+                        "linha la' pelas 195 mil ***")
+
+            checa(not aba.documento.alterado,
+                  "*** e navegar nao alterou o arquivo ***")
+        finally:
+            janela.close()
+            janela.deleteLater()
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
     testar_ponta_a_ponta()
     testar_sem_edicao_nao_grava()
     testar_margem_e_posicao()
+    testar_ctrl_end_vai_ao_fim_do_DOCUMENTO()
     return resumir()
 
 

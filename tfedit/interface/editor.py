@@ -298,7 +298,46 @@ class EditorDeslizante(QPlainTextEdit):
             # atalho da janela ser alcancado.
             evento.ignore()
             return
+
+        # DEFEITO RELATADO: Ctrl+End nao ia para a ultima linha.
+        #
+        # E' a mesma familia do Ctrl+Z acima, e por isso escapou do mesmo
+        # jeito: o `QPlainTextEdit` so' conhece a FATIA. "Fim do documento",
+        # para ele, e' o fim das 5000 linhas que ele tem na mao -- que num
+        # arquivo de 13 milhoes de linhas e' um lugar qualquer no meio. A
+        # tecla funcionava; o documento dela e' que era o errado.
+        #
+        # Nao da' para tratar isso no `ir_para_linha` nem no menu: a tecla nem
+        # chega la'. Tem de ser interceptada aqui.
+        if evento.matches(QKeySequence.StandardKey.MoveToEndOfDocument):
+            self.ir_para_fim_do_documento()
+            evento.accept()
+            return
+        if evento.matches(QKeySequence.StandardKey.MoveToStartOfDocument):
+            # O Ctrl+Home tinha o mesmo defeito, e era mais dificil de notar:
+            # a fatia do arranque comeca na linha 0, entao ele acertava por
+            # acidente ate' a primeira vez que a fatia deslizava.
+            self.ir_para_linha(0)
+            evento.accept()
+            return
+
         super().keyPressEvent(evento)
+
+    def ir_para_fim_do_documento(self) -> None:
+        """A ultima linha do documento, deslizando a fatia se preciso.
+
+        A ultima linha e' `total - 1`, e ha' uma sutileza: um arquivo que
+        termina em "\n" tem uma linha vazia final CONTADA no total. Ir para ela
+        e' o certo -- e' onde o cursor fica no Bloco de Notas, e e' onde alguem
+        que aperta Ctrl+End para acrescentar uma linha espera estar.
+        """
+        total = max(1, self.janela.documento.total_de_linhas)
+        self.ir_para_linha(total - 1)
+        # Depois de deslizar, o cursor cai na PRIMEIRA coluna da ultima linha.
+        # Ctrl+End no fim do documento significa depois do ultimo caractere.
+        cursor = self.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.EndOfLine)
+        self.setTextCursor(cursor)
 
     def linha_atual_no_documento(self) -> int:
         return self.janela.linha_no_documento(self.textCursor().blockNumber())
