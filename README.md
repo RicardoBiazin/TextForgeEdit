@@ -224,6 +224,39 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## A recusa de conversão nomeia o caractere
+
+Quando uma conversão de codificação é recusada, a mensagem traz o **nome
+Unicode** e o ponto de código, e não só o caractere.
+
+Veio de um caso real. Um CSV foi recusado para Latin-1 por causa de um `Ę` —
+*E com ogonek*, letra polonesa — e a mensagem dizia exatamente isso. Estava
+**certa**. Mas na fonte do diálogo `Ę` e `É` são indistinguíveis, e a conclusão
+natural de quem leu foi que o programa estava errado, porque `É` obviamente
+existe em Latin-1.
+
+Mostrar o caractere não basta quando o problema é justamente que ele se parece
+com outro. `LATIN CAPITAL LETTER E WITH OGONEK` não se confunde com
+`LATIN CAPITAL LETTER E WITH ACUTE` em fonte nenhuma.
+
+### O defeito estava no arquivo, e tem conserto exato
+
+Aquele CSV tinha 29 letras do Leste Europeu no lugar de acentos portugueses —
+`Ę`→`Ê`, `ă`→`ã`, `ő`→`õ`, `ę`→`ê`. São o **mesmo byte** lido na tabela errada:
+0xCA é `Ê` em CP1252 e `Ę` em CP1250. O arquivo passou por um programa que o
+leu como Centro-Europeu e gravou como UTF-8.
+
+O conserto é `texto.encode("cp1250").decode("cp1252")`, e depois dele não sobra
+um único caractere fora de Latin-1. Está guardado em `teste_conversao.py`.
+
+## O runner não mente mais sobre suíte quebrada
+
+Um erro de sintaxe num arquivo de teste faz a suíte inteira não rodar: zero
+verificação executada, zero falha contada — e a linha `TOTAL` dizia
+`0 falhas`. O código de saída já era 1, mas **é a linha TOTAL que se lê**.
+Aconteceu de verdade e passou despercebido. Agora ela nomeia as suítes que não
+rodaram.
+
 ## Documento novo não pergunta, e volta na próxima vez
 
 Um "Sem título" com texto digitado **não pergunta nada ao fechar o programa**.

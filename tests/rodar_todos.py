@@ -111,7 +111,16 @@ def main() -> int:
             quebradas.append((arquivo, saida))
 
     print("-" * 74)
-    print("TOTAL: %d verificacoes ok, %d falhas" % (total_ok, total_falhas))
+    # A SUITE QUEBRADA TEM DE APARECER AQUI. O codigo de saida ja' era 1, mas
+    # esta linha dizia "0 falhas" -- e e' esta linha que se le'. Um erro de
+    # sintaxe num arquivo de teste faz a suite inteira nao rodar: zero
+    # verificacao executada, zero falha contada, e um resumo verde sobre
+    # nenhum teste. Aconteceu de verdade, e passou despercebido.
+    resumo = "TOTAL: %d verificacoes ok, %d falhas" % (total_ok, total_falhas)
+    if quebradas:
+        resumo += "  +  %d SUITE(S) QUE NAO RODARAM: %s" % (
+            len(quebradas), ", ".join(a for a, _ in quebradas))
+    print(resumo)
     for arquivo, saida in quebradas:
         print("\n===== saida de %s =====" % arquivo)
         print(saida[-4000:])

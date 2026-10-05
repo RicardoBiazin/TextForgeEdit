@@ -80,6 +80,28 @@ ALVOS: tuple[Alvo, ...] = (
 )
 
 
+def descrever_caractere(caractere: str) -> str:
+    """"'Ę' (U+0118, LATIN CAPITAL LETTER E WITH OGONEK)".
+
+    MOSTRAR O CARACTERE NAO BASTA, e isto veio de um caso real: um CSV foi
+    recusado para Latin-1 por causa de um "Ę", e a mensagem dizia exatamente
+    isso -- mas na fonte do dialogo "Ę" e "É" sao indistinguiveis, e a
+    conclusao natural de quem leu foi que o programa estava errado, porque
+    "É" obviamente existe em Latin-1. O programa estava certo; a mensagem e'
+    que nao dava como saber.
+
+    O nome Unicode resolve: "E WITH OGONEK" nao se confunde com "E WITH ACUTE"
+    em fonte nenhuma. E o ponto de codigo deixa procurar.
+    """
+    import unicodedata
+
+    nome = unicodedata.name(caractere, "")
+    ponto = f"U+{ord(caractere):04X}"
+    if nome:
+        return f"{caractere!r} ({ponto}, {nome})"
+    return f"{caractere!r} ({ponto})"
+
+
 class NaoRepresentavel(ValueError):
     """O texto tem caractere que a codificacao de destino nao escreve."""
 
@@ -88,9 +110,9 @@ class NaoRepresentavel(ValueError):
         self.linha = linha
         self.rotulo = rotulo
         super().__init__(
-            f"O caractere {caractere!r} (linha {linha:n}) não existe em "
-            f"{rotulo}. Converter assim trocaria esse caractere por "
-            f"\"?\" — e não haveria como recuperá-lo depois.")
+            f"O caractere {descrever_caractere(caractere)} (linha {linha:n}) "
+            f"não existe em {rotulo}. Converter assim trocaria esse caractere "
+            f"por \"?\" — e não haveria como recuperá-lo depois.")
 
 
 class OrigemInvalida(ValueError):

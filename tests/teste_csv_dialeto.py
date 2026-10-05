@@ -414,7 +414,6 @@ def testar_uma_linha_so_nao_e_tabela() -> None:
     checa_igual(escolhido.colunas, 4,
                 "*** e escolhido a' mao, um arquivo de uma linha abre igual: "
                 "a duvida era da heuristica, nao do usuario ***")
-
 def main() -> int:
     testar_csv_brasileiro()
     testar_desempate_pelo_cabecalho()

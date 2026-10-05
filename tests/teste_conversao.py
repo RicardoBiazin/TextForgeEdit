@@ -471,6 +471,88 @@ def testar_menu_de_codificacao() -> None:
             janela.close()
 
 
+
+def testar_recusa_nomeia_o_caractere() -> None:
+    """A recusa tem de NOMEAR o caractere. Veio de um caso real.
+
+    Um CSV foi recusado para Latin-1 por causa de um "Ę" -- E COM OGONEK, uma
+    letra polonesa que entrou no arquivo no lugar de "Ê" por uma volta pelo
+    CP1250. A mensagem dizia exatamente isso, e estava CERTA. Mas na fonte do
+    diálogo "Ę" e "É" são indistinguíveis, e a conclusão natural de quem leu
+    foi que o programa estava errado -- porque "É" obviamente existe em
+    Latin-1.
+
+    Mostrar o caractere não basta quando o problema é justamente que ele se
+    parece com outro. O nome Unicode não se confunde em fonte nenhuma.
+    """
+    secao("*** A recusa nomeia o caractere, e nao so' o mostra ***")
+
+    from tfedit.conversao import NaoRepresentavel, descrever_caractere
+
+    # O par que gerou a confusao.
+    ogonek = descrever_caractere("\u0118")      # Ę
+    agudo = descrever_caractere("\u00c9")       # É
+    checa("OGONEK" in ogonek,
+          f"*** o E com ogonek se identifica: {ogonek} ***")
+    checa("ACUTE" in agudo, f"e o E com acento agudo: {agudo}")
+    checa(ogonek != agudo,
+          "*** e as duas descricoes sao DIFERENTES -- na tela os dois "
+          "caracteres nao sao ***")
+    checa("U+0118" in ogonek and "U+00C9" in agudo,
+          "com o ponto de codigo, que da' para procurar")
+
+    mensagem = str(NaoRepresentavel("\u0118", 1, "ISO-8859-1 (Latin-1)"))
+    checa("U+0118" in mensagem and "OGONEK" in mensagem,
+          f"*** e a mensagem inteira carrega isso: {mensagem[:90]}... ***")
+    checa("linha 1" in mensagem, "e continua dizendo a linha")
+
+    # O É, que CABE em Latin-1, nunca deve chegar a esta mensagem.
+    "\u00c9".encode("iso-8859-1")
+    checa(True,
+          "*** e o 'É' de verdade codifica em Latin-1 sem reclamar: a recusa "
+          "do caso real estava certa ***")
+
+    # Um caractere sem nome no banco Unicode nao pode derrubar a mensagem.
+    sem_nome = descrever_caractere("\uf8ff")
+    checa("U+F8FF" in sem_nome,
+          f"*** e um caractere sem nome ainda e' identificado: {sem_nome} ***")
+
+
+def testar_acentos_vindos_do_CP1250() -> None:
+    """O defeito que o usuario tinha era no ARQUIVO, e tem conserto exato.
+
+    Quatro letras do Leste Europeu ocupavam o lugar de acentos portugueses --
+    o mesmo BYTE lido na tabela errada. Guardar isto num teste documenta o
+    conserto: `texto.encode("cp1250").decode("cp1252")`.
+    """
+    secao("*** Acentos estragados por uma volta no CP1250 ***")
+
+    pares = [("\u0118", "\u00ca"),      # Ę -> Ê
+             ("\u0103", "\u00e3"),      # ă -> ã
+             ("\u0151", "\u00f5"),      # ő -> õ
+             ("\u0119", "\u00ea")]      # ę -> ê
+
+    for estragado, certo in pares:
+        byte_a = estragado.encode("cp1250")
+        byte_b = certo.encode("cp1252")
+        checa_igual(byte_a, byte_b,
+                    f"*** {estragado!r} e {certo!r} sao o MESMO byte "
+                    f"(0x{byte_a.hex().upper()}) em tabelas diferentes ***")
+        try:
+            certo.encode("iso-8859-1")
+        except UnicodeEncodeError:
+            checa(False, f"{certo!r} deveria caber em Latin-1")
+        checa_levanta(UnicodeEncodeError,
+                      lambda e=estragado: e.encode("iso-8859-1"),
+                      f"e {estragado!r} nao cabe -- a recusa estava certa")
+
+    estragado = "REFER\u0118NCIA;descri\u00e7\u0103o;gest\u0103o"
+    consertado = estragado.encode("cp1250").decode("cp1252")
+    checa_igual(consertado, "REFER\u00caNCIA;descri\u00e7\u00e3o;gest\u00e3o",
+                "*** e a volta pelo CP1252 devolve os acentos certos ***")
+    consertado.encode("iso-8859-1")
+    checa(True, "que ai' sim cabem em Latin-1")
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -490,6 +572,8 @@ def main() -> int:
     testar_reinterpretar()
     testar_reinterpretar_recusa_com_edicao()
     testar_menu_de_codificacao()
+    testar_recusa_nomeia_o_caractere()
+    testar_acentos_vindos_do_CP1250()
     return resumir()
 
 
