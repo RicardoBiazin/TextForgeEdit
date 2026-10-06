@@ -27,8 +27,8 @@ import pathlib
 import re
 import sys
 
-from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
-                       pular, resumir, secao)
+from ajudantes import (checa, checa_igual, drenar_eventos,
+                       pasta_temporaria, preparar_qt, pular, resumir, secao)
 
 TEM_QT = preparar_qt()
 
@@ -566,6 +566,115 @@ def testar_botoes_oferecidos_tem_tudo() -> None:
         _encerrar(janela)
 
 
+
+def testar_numero_acompanha_a_linha() -> None:
+    """DEFEITO RELATADO: o numero ia se descolando do texto linha a linha.
+
+    Medido na captura do usuario: na linha 1 o numero e o nome coincidiam
+    (+0,5 px); na linha 25 o numero estava 37,5 px ACIMA do nome -- mais de
+    duas linhas inteiras, com a linha medindo 18 px. E a ultima linha ficava
+    sem numero nenhum, porque a soma ja' tinha passado do fim da area.
+
+    A causa: a altura era medida UMA VEZ, no primeiro bloco visivel, e somada
+    a cada volta do laco. Qualquer bloco que meca diferente desloca TODOS os
+    numeros seguintes, e o erro se acumula para baixo.
+
+    O teste usa QUEBRA DE LINHA para produzir blocos de alturas diferentes --
+    e' o caso em que o defeito e' reproduzivel sem depender da escala de tela.
+    """
+    secao("*** O numero fica na altura da linha a que pertence ***")
+
+    janela = _janela()
+    try:
+        aba = janela.aba_atual
+        editor = aba.editor
+        janela.cfg = {**janela.cfg, "numero_de_linha": "todas",
+                      "quebrar_linha": True}
+        janela.aplicar_configuracao({**janela.cfg})
+
+        editor.setPlainText(
+            "curta\n"
+            + "palavra " * 90 + "\n"      # esta ocupa VARIAS linhas na tela
+            + "curta de novo\n"
+            + "ultima\n")
+        janela.resize(640, 700)
+        janela.show()
+        drenar_eventos(6)
+
+        alturas = []
+        bloco = editor.firstVisibleBlock()
+        while bloco.isValid():
+            alturas.append(editor.blockBoundingRect(bloco).height())
+            bloco = bloco.next()
+        checa(len(set(alturas)) > 1,
+              f"*** os blocos tem alturas DIFERENTES ({alturas}): e' aqui que "
+              f"somar uma altura fixa quebra ***")
+
+        # Onde a margem desenharia cada numero, pelo mesmo calculo da pintura.
+        deslocamento = editor.contentOffset()
+        bloco = editor.firstVisibleBlock()
+        desvios = []
+        soma = round(editor.blockBoundingGeometry(bloco)
+                     .translated(deslocamento).top())
+        passo = round(editor.blockBoundingRect(bloco).height())
+        while bloco.isValid():
+            real = round(editor.blockBoundingGeometry(bloco)
+                         .translated(deslocamento).top())
+            desvios.append(soma - real)
+            soma += passo
+            bloco = bloco.next()
+
+        pior = max(abs(d) for d in desvios)
+        checa(pior > passo,
+              f"*** o metodo ANTIGO (somar uma altura fixa) erra ate' "
+              f"{pior} px aqui, mais que uma linha inteira de {passo} px -- "
+              f"e' exatamente o defeito relatado ***")
+
+        # E a pintura de hoje NAO usa esse metodo.
+        fonte = pathlib.Path(
+            editor.__class__.__module__.replace(".", "/") + ".py")
+        raiz = pathlib.Path(__file__).resolve().parent.parent
+        texto = (raiz / fonte).read_text(encoding="utf-8")
+        inicio = texto.index("def pintar_margem")
+        fim = texto.index("def cor_da_margem")
+        pintura = texto[inicio:fim]
+        checa("topo += altura" not in pintura,
+              "*** a pintura NAO acumula mais a altura ***")
+        checa("blockBoundingGeometry" in pintura
+              and pintura.count("blockBoundingGeometry") >= 1,
+              "e pergunta ao Qt onde cada bloco esta'")
+
+        # A prova visual: cada numero desenhado cai DENTRO da faixa da sua
+        # linha, e nao na do vizinho.
+        editor.margem.resize(editor.largura_da_margem(), editor.height())
+        drenar_eventos(2)
+        imagem = editor.margem.grab().toImage()
+        fundo = editor.cor_da_margem("editor.margem_fundo").rgb()
+
+        def faixa_com_tinta(y0: int, y1: int) -> bool:
+            for y in range(max(0, y0), min(imagem.height(), y1)):
+                for x in range(imagem.width() - 1):
+                    if imagem.pixelColor(x, y).rgb() != fundo:
+                        return True
+            return False
+
+        bloco = editor.firstVisibleBlock()
+        conferidas = 0
+        while bloco.isValid() and conferidas < 4:
+            geo = editor.blockBoundingGeometry(bloco).translated(deslocamento)
+            topo, altura = round(geo.top()), round(geo.height())
+            if 0 <= topo and topo + altura <= imagem.height():
+                checa(faixa_com_tinta(topo, topo + altura),
+                      f"*** ha' numero desenhado na faixa da linha "
+                      f"{bloco.blockNumber() + 1} (y {topo}..{topo + altura}) "
+                      f"***")
+                conferidas += 1
+            bloco = bloco.next()
+        checa(conferidas >= 3,
+              f"e isso foi conferido em {conferidas} linhas")
+    finally:
+        _encerrar(janela)
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -590,6 +699,7 @@ def main() -> int:
     testar_barra_pode_sumir()
     testar_chave_desconhecida_nao_derruba()
     testar_botoes_oferecidos_tem_tudo()
+    testar_numero_acompanha_a_linha()
     return resumir()
 
 

@@ -431,17 +431,36 @@ class EditorDeslizante(QPlainTextEdit):
         pintor.fillRect(evento.rect(), self.cor_da_margem("editor.margem_fundo"))
 
         bloco = self.firstVisibleBlock()
-        topo = round(self.blockBoundingGeometry(bloco)
-                     .translated(self.contentOffset()).top())
-        altura = round(self.blockBoundingRect(bloco).height())
         atual = self.textCursor().blockNumber()
+        deslocamento = self.contentOffset()
 
         comum = self.cor_da_margem("editor.margem_texto")
         destacado = self.cor_da_margem("editor.margem_texto_atual")
         fundo_atual = self.cor_da_margem("editor.linha_atual")
         largura = self.margem.width()
 
-        while bloco.isValid() and topo <= evento.rect().bottom():
+        while bloco.isValid():
+            # A POSICAO SAI DA GEOMETRIA DESTE BLOCO, e nao de uma soma.
+            #
+            # DEFEITO RELATADO: o numero da linha ia se descolando do texto --
+            # alinhado no topo da tela e, lá embaixo, duas linhas acima do nome
+            # a que pertencia. Medido na captura do usuario: +0,5 px de
+            # diferenca na linha 1 e -37,5 px na linha 25, com a linha medindo
+            # 18 px.
+            #
+            # A causa: a altura era medida UMA VEZ, no primeiro bloco visivel,
+            # e somada a cada volta. Qualquer bloco que meca diferente -- uma
+            # linha quebrada ocupa varias, e o arredondamento para inteiro
+            # tambem cobra o seu -- desloca TODOS os numeros seguintes, e o
+            # erro se acumula para baixo. Perguntar ao Qt onde cada bloco
+            # esta' custa uma chamada por linha VISIVEL (algumas dezenas) e
+            # nao erra nunca.
+            geometria = self.blockBoundingGeometry(bloco).translated(
+                deslocamento)
+            topo = round(geometria.top())
+            altura = round(geometria.height())
+            if topo > evento.rect().bottom():
+                break
             if bloco.isVisible() and topo + altura >= evento.rect().top():
                 e_o_atual = bloco.blockNumber() == atual
                 if modo == "todas" or e_o_atual:
@@ -460,7 +479,6 @@ class EditorDeslizante(QPlainTextEdit):
                                         | Qt.AlignmentFlag.AlignVCenter),
                                     str(numero))
             bloco = bloco.next()
-            topo += altura
 
         # A borda separa a margem do texto. Sem ela, com a margem e o editor
         # em tons proximos, os numeros parecem parte do conteudo.

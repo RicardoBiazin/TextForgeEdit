@@ -224,6 +224,34 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## O número fica na altura da sua linha
+
+A margem lê a geometria de **cada bloco**, em vez de medir uma altura e somá-la.
+
+O defeito: o número ia se descolando do texto conforme se descia. Medido na
+captura de um arquivo de 25 nomes — os números avançavam exatos 18 px por
+linha, o texto avançava ~19,5 px:
+
+| linha | número (y) | texto (y) | distância |
+|---|---|---|---|
+| 1 | 12 | 11 | alinhado |
+| 10 | 174 | 173 | alinhado |
+| 25 | 426 | 463 | **37 px — duas linhas** |
+
+E a última linha ficava **sem número nenhum**, porque a soma já tinha passado
+do fim da área de desenho antes de chegar nela.
+
+A causa era uma linha de código: a altura era medida **uma vez**, no primeiro
+bloco visível, e somada a cada volta do laço. Qualquer bloco que meça diferente
+desloca todos os números seguintes, e o erro se acumula para baixo. E blocos
+medem diferente por vários motivos — uma linha que quebra ocupa várias, o
+último bloco carrega a margem inferior do documento, e com a escala de tela do
+Windows a altura vira fracionária e o arredondamento cobra o seu a cada linha.
+
+Perguntar ao Qt onde cada bloco está custa uma chamada por linha **visível** —
+algumas dezenas — e não erra nunca. O teste força blocos de alturas
+`[18, 180, 18, 18, 22]` e mede: o método antigo erra até **162 px** ali.
+
 ## A recusa de conversão nomeia o caractere
 
 Quando uma conversão de codificação é recusada, a mensagem traz o **nome
