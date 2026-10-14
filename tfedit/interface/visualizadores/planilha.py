@@ -286,9 +286,47 @@ class GradePlanilha(VisualizadorDeDocumento, QWidget):
         self.sujou.emit()
 
     def copiar(self) -> None:
+        """Copia a SELECAO inteira, no formato que o Excel cola.
+
+        DEFEITO RELATADO: selecionar uma coluna e copiar levava so' a primeira
+        celula. O metodo lia `currentIndex()` -- a celula com o cursor --,
+        e ignorava todo o resto da selecao.
+
+        Cada linha vira uma linha de texto, cada coluna separada por TAB, e
+        celulas fora da selecao (numa selecao irregular) ficam vazias para
+        manter as colunas alinhadas. O `csv` cuida das aspas quando um valor
+        tem TAB ou quebra de linha, como o Excel faz.
+        """
+        import csv
+        import io
+
         from PySide6.QtGui import QGuiApplication
 
-        indice = self.tabela.currentIndex()
-        if indice.isValid():
-            QGuiApplication.clipboard().setText(
-                str(self.tabela.model().data(indice) or ""))
+        modelo = self.tabela.model()
+        selecao = self.tabela.selectionModel()
+        indices = selecao.selectedIndexes() if selecao is not None else []
+        if not indices:
+            atual = self.tabela.currentIndex()
+            if not atual.isValid():
+                return
+            indices = [atual]
+
+        marcadas = {(i.row(), i.column()) for i in indices}
+        linhas = sorted({r for r, _ in marcadas})
+        colunas = sorted({c for _, c in marcadas})
+
+        saida = io.StringIO()
+        escritor = csv.writer(saida, delimiter="\t", lineterminator="\n")
+        for r in linhas:
+            escritor.writerow(
+                [str(modelo.data(modelo.index(r, c)) or "")
+                 if (r, c) in marcadas else ""
+                 for c in colunas])
+
+        # O `csv` termina cada linha com "\n", inclusive a ultima. Colar uma
+        # celula so' nao deve trazer uma linha em branco no fim: tira-se o
+        # terminador final, e so' ele.
+        texto = saida.getvalue()
+        if texto.endswith("\n"):
+            texto = texto[:-1]
+        QGuiApplication.clipboard().setText(texto)

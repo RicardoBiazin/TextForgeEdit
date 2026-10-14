@@ -224,6 +224,19 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Copiar uma seleção da planilha leva a seleção inteira
+
+Selecionar uma coluna e copiar levava só a primeira célula. O `copiar` lia
+apenas a célula com o cursor e ignorava o resto da seleção.
+
+Agora copia o retângulo selecionado no formato que o Excel cola: colunas
+separadas por TAB, linhas por quebra de linha. Numa seleção irregular, as células
+que não estão selecionadas saem vazias, para as colunas continuarem alinhadas.
+Um valor com TAB ou quebra de linha dentro vai entre aspas, como o Excel faz,
+para não virar outra célula ao colar.
+
+Sem seleção nenhuma, copia a célula atual.
+
 ## O número fica na altura da sua linha
 
 A margem lê a geometria de **cada bloco**, em vez de medir uma altura e somá-la.

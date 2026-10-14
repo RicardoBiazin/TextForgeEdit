@@ -28,8 +28,8 @@ from __future__ import annotations
 import sys
 import zipfile
 
-from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
-                       pular, resumir, secao)
+from ajudantes import (checa, checa_igual, drenar_eventos, pasta_temporaria,
+                       preparar_qt, pular, resumir, secao)
 
 TEM_QT = preparar_qt()
 
@@ -465,6 +465,94 @@ def testar_gravar_zera_o_desfazer() -> None:
             _encerrar(janela)
 
 
+
+def testar_copiar_leva_a_selecao_inteira() -> None:
+    """DEFEITO RELATADO: selecionar uma coluna e copiar levava so' a 1a celula.
+
+    O `copiar` lia so' `currentIndex()`. O teste seleciona um intervalo de
+    verdade, manda a TECLA Ctrl+C pela janela, e confere o texto que chegou
+    na area de transferencia -- nao o metodo.
+    """
+    secao("*** Copiar leva a SELECAO inteira, no formato do Excel ***")
+
+    from PySide6.QtCore import QItemSelectionModel
+    from PySide6.QtGui import QGuiApplication
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta, linhas=6)
+        janela = _abrir(pasta, alvo)
+        try:
+            aba = janela.aba_atual
+            grade = aba.view("planilha")
+            tabela = grade.tabela
+            modelo = tabela.model()
+
+            # Coluna A inteira, da linha 1 a 4 (cabecalho + 3 linhas).
+            # A ORDEM IMPORTA: `setCurrentIndex` SUBSTITUI a selecao (e' o que
+            # um clique faz), entao a celula atual vem antes do intervalo.
+            tabela.clearSelection()
+            tabela.setCurrentIndex(modelo.index(0, 0))
+            for linha in range(0, 4):
+                tabela.selectionModel().select(
+                    modelo.index(linha, 0),
+                    QItemSelectionModel.SelectionFlag.Select)
+
+            janela._no_editor("copy")
+            drenar_eventos(2)
+            texto = QGuiApplication.clipboard().text()
+            esperado = "\n".join(str(modelo.data(modelo.index(l, 0)) or "")
+                                 for l in range(0, 4))
+            linhas = texto.split("\n")
+            checa_igual(len(linhas), 4,
+                        f"*** a coluna inteira foi copiada: {len(linhas)} "
+                        f"linha(s) de 4 selecionadas ***")
+            checa_igual(texto, esperado,
+                        "e cada linha e' o valor da celula certa, sem linha "
+                        "sobrando no fim")
+
+            # Intervalo 2 x 2: colunas separadas por TAB, linhas por quebra.
+            tabela.clearSelection()
+            tabela.setCurrentIndex(modelo.index(1, 0))
+            for linha in (1, 2):
+                for coluna in (0, 1):
+                    tabela.selectionModel().select(
+                        modelo.index(linha, coluna),
+                        QItemSelectionModel.SelectionFlag.Select)
+            janela._no_editor("copy")
+            drenar_eventos(2)
+            blocos = QGuiApplication.clipboard().text().split("\n")
+            checa_igual(len(blocos), 2, "um bloco 2x2 tem 2 linhas")
+            checa(all(len(l.split("\t")) == 2 for l in blocos),
+                  "*** e cada linha tem 2 colunas separadas por TAB, que e' "
+                  "o que o Excel cola em celulas ***")
+
+            # Uma celula sem selecao nenhuma ainda copia a atual.
+            tabela.clearSelection()
+            tabela.setCurrentIndex(modelo.index(1, 0))
+            janela._no_editor("copy")
+            drenar_eventos(2)
+            checa_igual(QGuiApplication.clipboard().text(),
+                        str(modelo.data(modelo.index(1, 0)) or ""),
+                        "*** sem selecao, copia a celula atual ***")
+        finally:
+            _encerrar(janela)
+
+
+def testar_copiar_escapa_valor_com_tabulacao() -> None:
+    """Um valor com TAB ou quebra de linha nao pode virar outra celula."""
+    secao("*** Valor com TAB ou quebra de linha vai entre aspas ***")
+
+    import csv
+    import io
+
+    saida = io.StringIO()
+    csv.writer(saida, delimiter="\t", lineterminator="\n").writerow(
+        ["com\ttab", "com\nquebra", "normal"])
+    texto = saida.getvalue()
+    lido = next(csv.reader(io.StringIO(texto), delimiter="\t"))
+    checa_igual(lido, ["com\ttab", "com\nquebra", "normal"],
+                "*** lido de volta, o valor continua UMA celula ***")
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -488,6 +576,8 @@ def main() -> int:
     testar_desfazer_na_planilha()
     testar_desfazer_restaura_celula_que_nao_existia()
     testar_gravar_zera_o_desfazer()
+    testar_copiar_leva_a_selecao_inteira()
+    testar_copiar_escapa_valor_com_tabulacao()
     return resumir()
 
 
