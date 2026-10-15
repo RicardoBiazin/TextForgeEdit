@@ -1215,6 +1215,11 @@ class JanelaPrincipal(QMainWindow):
         aba.titulo_mudou.connect(self._atualizar_titulos)
         aba.indexando.connect(self._ao_indexar)
         aba.indexou.connect(self._ao_terminar_indice)
+        # A planilha tambem recusa com motivo (copia grande demais). Sem esta
+        # ligacao o `recusou` existia e ninguem o ouvia: a recusa era muda.
+        if aba.e_planilha and aba.view("planilha") is not None:
+            aba.view("planilha").recusou.connect(
+                lambda m: self.barra.showMessage(m, 8000))
 
     def novo(self) -> bool:
         """Um documento em branco, pronto para digitar.

@@ -1062,6 +1062,92 @@ def testar_substituir_todas_funciona_na_grade() -> None:
         finally:
             _encerrar(janela)
 
+
+def testar_copiar_na_grade_de_colunas() -> None:
+    """DEFEITO RELATADO: Ctrl+C na grade de colunas nao copiava nada.
+
+    A grade nao tinha `copiar`: o despacho nao achava o metodo e a tecla caia
+    no editor de texto escondido, que estava vazio. O teste manda a TECLA e le
+    a area de transferencia, como o da planilha.
+    """
+    secao("*** Copiar na grade de colunas leva a selecao, no formato do Excel ***")
+
+    from PySide6.QtCore import QItemSelectionModel
+    from PySide6.QtGui import QGuiApplication
+
+    from tfedit.interface.visualizadores import base
+
+    linhas = [b"codigo;produto;cidade"]
+    for i in range(12):
+        linhas.append(f"C{i:03};item {i};cidade{i}".encode())
+    dados = b"\r\n".join(linhas) + b"\r\n"
+
+    with pasta_temporaria() as pasta:
+        janela, _ = _janela_com(pasta, "copia.csv", dados)
+        try:
+            janela._trocar_view("tabela")
+            aba = janela.aba_atual
+            grade = aba.view("tabela")
+            modelo = grade.model()
+
+            # A primeira coluna, de cima a baixo, pelo CLIQUE no cabecalho:
+            # a celula atual antes do intervalo, como o clique faz.
+            grade.clearSelection()
+            grade.setCurrentIndex(modelo.index(0, 0))
+            for linha in range(0, 5):
+                grade.selectionModel().select(
+                    modelo.index(linha, 0),
+                    QItemSelectionModel.SelectionFlag.Select)
+
+            QGuiApplication.clipboard().setText("antes")
+            janela._no_editor("copy")
+            drenar_eventos(2)
+            texto = QGuiApplication.clipboard().text()
+            esperado = "\n".join(str(modelo.data(modelo.index(l, 0)) or "")
+                                 for l in range(0, 5))
+            checa_igual(texto, esperado,
+                        "*** as 5 linhas da coluna foram copiadas, uma por "
+                        "linha de texto ***")
+
+            # Um bloco 2 x 2 sai com TAB entre colunas.
+            grade.clearSelection()
+            grade.setCurrentIndex(modelo.index(1, 1))
+            for linha in (1, 2):
+                for coluna in (1, 2):
+                    grade.selectionModel().select(
+                        modelo.index(linha, coluna),
+                        QItemSelectionModel.SelectionFlag.Select)
+            janela._no_editor("copy")
+            drenar_eventos(2)
+            blocos = QGuiApplication.clipboard().text().split("\n")
+            checa_igual(len(blocos), 2, "o bloco tem 2 linhas")
+            checa(all(len(b.split("\t")) == 2 for b in blocos),
+                  "*** e 2 colunas em cada linha, separadas por TAB ***")
+
+            # O teto: uma selecao maior que ele NAO copia, e diz por que.
+            antigo = base.TETO_DE_CELULAS_NA_COPIA
+            base.TETO_DE_CELULAS_NA_COPIA = 3
+            try:
+                QGuiApplication.clipboard().setText("intacto")
+                grade.clearSelection()
+                grade.setCurrentIndex(modelo.index(0, 0))
+                for linha in range(0, 4):
+                    grade.selectionModel().select(
+                        modelo.index(linha, 0),
+                        QItemSelectionModel.SelectionFlag.Select)
+                janela._no_editor("copy")
+                drenar_eventos(2)
+                checa_igual(QGuiApplication.clipboard().text(), "intacto",
+                            "*** acima do teto, a area de transferencia nao "
+                            "muda ***")
+                checa("limite para copiar" in janela.barra.currentMessage(),
+                      f"*** e a barra diz o motivo: "
+                      f"{janela.barra.currentMessage()!r} ***")
+            finally:
+                base.TETO_DE_CELULAS_NA_COPIA = antigo
+        finally:
+            _encerrar(janela)
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -1097,6 +1183,7 @@ def main() -> int:
     testar_busca_NAO_expulsa_da_grade()
     testar_hexadecimal_CONTINUA_voltando_ao_texto()
     testar_substituir_todas_funciona_na_grade()
+    testar_copiar_na_grade_de_colunas()
     return resumir()
 
 

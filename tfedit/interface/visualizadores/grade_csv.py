@@ -492,6 +492,25 @@ class GradeCsv(VisualizadorDeDocumento, QTableView):
             self.setCurrentIndex(celula)
             self.scrollTo(celula)
 
+    def copiar(self) -> None:
+        """Copia a selecao em formato de planilha: TAB entre colunas.
+
+        DEFEITO RELATADO: Ctrl+C na grade de colunas nao copiava nada. A grade
+        nao tinha `copiar`, o despacho nao achava o metodo, e a tecla caia no
+        editor de texto escondido -- que estava vazio nesta view.
+        """
+        from PySide6.QtGui import QGuiApplication
+
+        from tfedit.interface.visualizadores.base import (CopiaGrande,
+                                                          texto_da_selecao)
+
+        try:
+            texto = texto_da_selecao(self)
+        except CopiaGrande as erro:
+            self.recusou.emit(str(erro))
+            return
+        QGuiApplication.clipboard().setText(texto)
+
     def desfazer(self) -> None:
         """Ctrl+Z na grade desfaz na TABELA DE PECAS.
 

@@ -48,6 +48,80 @@ from __future__ import annotations
 SINAIS = ("posicao_mudou", "sujou", "recusou")
 
 
+#: Celulas que uma copia leva, no maximo. A area de transferencia guarda o
+#: texto INTEIRO na memoria, e 200 mil celulas ja' sao dezenas de MB. Acima
+#: disto a copia e' recusada com o motivo -- o mesmo caminho do hexadecimal,
+#: que tem o seu proprio teto em bytes.
+TETO_DE_CELULAS_NA_COPIA = 200_000
+
+
+class CopiaGrande(ValueError):
+    """A selecao tem celulas demais para copiar. Traz quantas, para a mensagem."""
+
+    def __init__(self, celulas: int) -> None:
+        self.celulas = celulas
+        super().__init__(
+            f"A seleção tem {celulas:,} células. O limite para copiar é de "
+            f"{TETO_DE_CELULAS_NA_COPIA:,} — selecione menos linhas.".replace(
+                ",", "."))
+
+
+def texto_da_selecao(tabela, valor=None) -> str:
+    """O texto da SELECAO inteira, no formato que o Excel cola.
+
+    Cada linha vira uma linha de texto e cada coluna e' separada por TAB. Numa
+    selecao irregular, as celulas que nao estao selecionadas saem vazias, para
+    as colunas continuarem alinhadas. O `csv` poe aspas quando um valor tem TAB
+    ou quebra de linha, para ele nao virar outra celula ao colar.
+
+    Sem selecao nenhuma, copia a celula atual. `valor(modelo, indice)` diz o
+    texto de cada celula; o padrao e' o que o modelo mostra.
+
+    Levanta `CopiaGrande` ANTES de montar qualquer coisa quando a selecao passa
+    do teto: a conta sai das faixas, sem percorrer celula por celula.
+    """
+    import csv
+    import io
+
+    modelo = tabela.model()
+    if valor is None:
+        def valor(m, i):
+            return m.data(i)
+
+    selecao = tabela.selectionModel()
+    faixas = list(selecao.selection()) if selecao is not None else []
+
+    previsto = sum((f.bottom() - f.top() + 1) * (f.right() - f.left() + 1)
+                   for f in faixas)
+    if previsto > TETO_DE_CELULAS_NA_COPIA:
+        raise CopiaGrande(previsto)
+
+    marcadas = {(r, c)
+                for f in faixas
+                for r in range(f.top(), f.bottom() + 1)
+                for c in range(f.left(), f.right() + 1)}
+    if not marcadas:
+        atual = tabela.currentIndex()
+        if not atual.isValid():
+            return ""
+        marcadas = {(atual.row(), atual.column())}
+
+    linhas = sorted({r for r, _ in marcadas})
+    colunas = sorted({c for _, c in marcadas})
+    saida = io.StringIO()
+    escritor = csv.writer(saida, delimiter="\t", lineterminator="\n")
+    for r in linhas:
+        escritor.writerow(
+            [str(valor(modelo, modelo.index(r, c)) or "")
+             if (r, c) in marcadas else ""
+             for c in colunas])
+
+    # O `csv` termina a ultima linha com "\n". Colar uma celula so' nao deve
+    # trazer uma linha em branco no fim.
+    texto = saida.getvalue()
+    return texto[:-1] if texto.endswith("\n") else texto
+
+
 class VisualizadorDeDocumento:
     """Parte comum das views. Mixin: a base Qt vem da view concreta."""
 

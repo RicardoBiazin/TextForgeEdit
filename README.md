@@ -224,6 +224,21 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Copiar funciona na grade de colunas, e a seleção inteira vai junto
+
+Duas falhas do mesmo gesto. Na **grade de colunas de um CSV**, Ctrl+C não copiava
+nada: a grade não tinha o comando, e a tecla caía no editor de texto escondido,
+que estava vazio. Na **planilha**, copiar levava só a primeira célula.
+
+Agora as duas usam a mesma função. Ela copia o intervalo selecionado no formato
+que o Excel cola: colunas separadas por TAB, linhas por quebra de linha. Um valor
+com TAB ou quebra dentro vai entre aspas, para não virar outra célula ao colar.
+
+Há um limite de **200 mil células** por cópia, porque a área de transferência
+guarda o texto inteiro na memória. Acima disso a cópia é recusada e a barra diz
+o motivo — o mesmo caminho do hexadecimal. A recusa da planilha, que antes não
+era mostrada em lugar nenhum, agora aparece na barra.
+
 ## Copiar uma seleção da planilha leva a seleção inteira
 
 Selecionar uma coluna e copiar levava só a primeira célula. O `copiar` lia

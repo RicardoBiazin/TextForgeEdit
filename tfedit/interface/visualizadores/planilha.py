@@ -286,47 +286,19 @@ class GradePlanilha(VisualizadorDeDocumento, QWidget):
         self.sujou.emit()
 
     def copiar(self) -> None:
-        """Copia a SELECAO inteira, no formato que o Excel cola.
+        """Copia a SELECAO inteira. A montagem e' a de `base.texto_da_selecao`.
 
         DEFEITO RELATADO: selecionar uma coluna e copiar levava so' a primeira
-        celula. O metodo lia `currentIndex()` -- a celula com o cursor --,
-        e ignorava todo o resto da selecao.
-
-        Cada linha vira uma linha de texto, cada coluna separada por TAB, e
-        celulas fora da selecao (numa selecao irregular) ficam vazias para
-        manter as colunas alinhadas. O `csv` cuida das aspas quando um valor
-        tem TAB ou quebra de linha, como o Excel faz.
+        celula -- o metodo lia `currentIndex()`, e ignorava a selecao.
         """
-        import csv
-        import io
-
         from PySide6.QtGui import QGuiApplication
 
-        modelo = self.tabela.model()
-        selecao = self.tabela.selectionModel()
-        indices = selecao.selectedIndexes() if selecao is not None else []
-        if not indices:
-            atual = self.tabela.currentIndex()
-            if not atual.isValid():
-                return
-            indices = [atual]
+        from tfedit.interface.visualizadores.base import (CopiaGrande,
+                                                          texto_da_selecao)
 
-        marcadas = {(i.row(), i.column()) for i in indices}
-        linhas = sorted({r for r, _ in marcadas})
-        colunas = sorted({c for _, c in marcadas})
-
-        saida = io.StringIO()
-        escritor = csv.writer(saida, delimiter="\t", lineterminator="\n")
-        for r in linhas:
-            escritor.writerow(
-                [str(modelo.data(modelo.index(r, c)) or "")
-                 if (r, c) in marcadas else ""
-                 for c in colunas])
-
-        # O `csv` termina cada linha com "\n", inclusive a ultima. Colar uma
-        # celula so' nao deve trazer uma linha em branco no fim: tira-se o
-        # terminador final, e so' ele.
-        texto = saida.getvalue()
-        if texto.endswith("\n"):
-            texto = texto[:-1]
+        try:
+            texto = texto_da_selecao(self.tabela)
+        except CopiaGrande as erro:
+            self.recusou.emit(str(erro))
+            return
         QGuiApplication.clipboard().setText(texto)
