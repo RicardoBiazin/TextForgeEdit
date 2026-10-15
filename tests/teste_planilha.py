@@ -25,11 +25,13 @@ O QUE ESTA SUITE GUARDA:
 
 from __future__ import annotations
 
+import io
+import pathlib
 import sys
 import zipfile
 
-from ajudantes import (checa, checa_igual, drenar_eventos, pasta_temporaria,
-                       preparar_qt, pular, resumir, secao)
+from ajudantes import (checa, checa_igual, checa_levanta, drenar_eventos,
+                       pasta_temporaria, preparar_qt, pular, resumir, secao)
 
 TEM_QT = preparar_qt()
 
@@ -553,6 +555,241 @@ def testar_copiar_escapa_valor_com_tabulacao() -> None:
     checa_igual(lido, ["com\ttab", "com\nquebra", "normal"],
                 "*** lido de volta, o valor continua UMA celula ***")
 
+
+def _ler_csv(caminho, separador=";"):
+    import csv
+    texto = pathlib.Path(caminho).read_bytes().decode("utf-8-sig")
+    return list(csv.reader(io.StringIO(texto), delimiter=separador))
+
+
+def testar_exportar_para_csv_com_separador_e_sem_mexer_no_xlsx() -> None:
+    """PEDIDO: exportar uma aba da planilha para CSV, com ';' por exemplo.
+
+    Dois pontos que importam: o CSV sai com o que a GRADE mostra, edicoes ainda
+    nao gravadas inclusive; e o .xlsx de origem fica byte a byte igual.
+    """
+    secao("*** Exportar a aba para CSV: ';', o que a grade mostra, xlsx intacto ***")
+
+    import hashlib
+
+    from tfedit.planilha import exportar as exportacao
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta, linhas=5)
+        antes = hashlib.sha256(alvo.read_bytes()).hexdigest()
+        janela = _abrir(pasta, alvo)
+        try:
+            aba = janela.aba_atual
+            folha = aba.view("planilha").tabela.model().folha
+            pasta_aberta = aba.planilha
+
+            # Uma edicao NAO gravada: tem de sair no CSV.
+            pasta_aberta.definir(folha, 2, 1, "Ana;Silva")
+
+            destino = pasta / "saida.csv"
+            linhas, colunas = exportacao.exportar(folha, destino,
+                                                  separador=";")
+            checa_igual((linhas, colunas), (folha.linhas, folha.colunas),
+                        "a exportacao reporta o tamanho da aba")
+
+            bruto = destino.read_bytes()
+            checa(bruto.count(b"\r\n") == folha.linhas,
+                  f"*** uma quebra CRLF por linha, como o Excel grava "
+                  f"({bruto.count(b'\r\n')} de {folha.linhas}) ***")
+            checa(not bruto.startswith(b"\xef\xbb\xbf"),
+                  "e sem BOM por padrao: UTF-8 puro")
+
+            lido = _ler_csv(destino, separador=";")
+            checa_igual(lido[0], ["produto", "quantidade", "preco"],
+                        "*** o cabecalho sai na primeira linha ***")
+            checa_igual(lido[1][0], "Ana;Silva",
+                        "*** a edicao nao gravada saiu no CSV, com o ';' "
+                        "DENTRO do valor preservado ***")
+            checa('"Ana;Silva"' in bruto.decode("utf-8"),
+                  "*** e o valor que tem ';' vai entre aspas: senao o ';' "
+                  "dele viraria separador ***")
+            checa_igual(lido[3][1], str(folha.celula(4, 2).texto),
+                        "*** e a quantidade sai como a grade mostra ***")
+
+            depois = hashlib.sha256(alvo.read_bytes()).hexdigest()
+            checa_igual(antes, depois,
+                        "*** o .xlsx de origem NAO mudou um byte ***")
+            checa(pasta_aberta.alterado,
+                  "a edicao continua pendente na planilha aberta, so' que a "
+                  "exportacao nao a gravou")
+        finally:
+            _encerrar(janela)
+
+
+def testar_codificacao_que_nao_representa_recusa_sem_gravar() -> None:
+    """Latin-1 nao escreve 'Ę': a exportacao recusa, nomeia, e nao cria arquivo.
+
+    Trocar por "?" seria perder dado em silencio -- a mesma regra da conversao.
+    """
+    secao("*** Latin-1 recusa o que nao representa, e nao grava nada ***")
+
+    from tfedit import conversao
+    from tfedit.planilha import exportar as exportacao
+
+    latin1 = conversao.ALVOS[3]
+    checa_igual(latin1.codec, "iso-8859-1", "o alvo e' Latin-1")
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta, linhas=3)
+        janela = _abrir(pasta, alvo)
+        try:
+            folha = janela.aba_atual.view("planilha").tabela.model().folha
+            janela.aba_atual.planilha.definir(folha, 2, 1, "REFERĘNCIA")
+
+            checa_levanta(conversao.NaoRepresentavel,
+                          lambda: exportacao.como_csv(folha, alvo=latin1),
+                          "*** Latin-1 recusa o 'Ę' ***")
+            try:
+                exportacao.como_csv(folha, alvo=latin1)
+            except conversao.NaoRepresentavel as erro:
+                checa("U+0118" in str(erro),
+                      f"*** e nomeia o caractere: {str(erro)[:70]}... ***")
+                checa_igual(erro.linha, 2, "e diz a linha, a 2")
+
+            destino = pasta / "latin.csv"
+            try:
+                exportacao.exportar(folha, destino, alvo=latin1)
+            except conversao.NaoRepresentavel:
+                pass
+            checa(not destino.exists(),
+                  "*** e NADA foi gravado: nem um arquivo pela metade ***")
+
+            # UTF-8 escreve tudo, e o mesmo conteudo sai.
+            utf8 = exportacao.como_csv(folha, alvo=conversao.ALVOS[0])
+            checa("REFERĘNCIA".encode("utf-8") in utf8,
+                  "e em UTF-8 o mesmo texto sai inteiro")
+        finally:
+            _encerrar(janela)
+
+
+def testar_bom_e_separador_proibido() -> None:
+    secao("*** BOM opcional, e separador que nao pode ser separador ***")
+
+    from tfedit import conversao
+    from tfedit.planilha import exportar as exportacao
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta, linhas=2)
+        janela = _abrir(pasta, alvo)
+        try:
+            folha = janela.aba_atual.view("planilha").tabela.model().folha
+
+            com_bom = exportacao.como_csv(folha, alvo=conversao.ALVOS[1])
+            checa(com_bom.startswith(b"\xef\xbb\xbf"),
+                  "*** 'UTF-8 com BOM' escreve o BOM: o Excel antigo precisa "
+                  "dele para ler acento ***")
+            checa_igual(_ler_csv_bytes(com_bom)[0][0], "produto",
+                        "e o BOM nao entra no primeiro campo")
+
+            for ruim in ('"', "\n"):
+                checa_levanta(ValueError,
+                              lambda r=ruim: exportacao.como_csv(
+                                  folha, separador=r),
+                              f"{ruim!r} nao vira separador")
+        finally:
+            _encerrar(janela)
+
+
+def _ler_csv_bytes(dados: bytes):
+    import csv
+    texto = dados.decode("utf-8-sig")
+    return list(csv.reader(io.StringIO(texto), delimiter=";"))
+
+
+def testar_menu_exportar_pela_janela() -> None:
+    """O comando de menu chega ate' a exportacao, com a escolha e o destino."""
+    secao("*** Arquivo > Exportar para CSV grava o arquivo escolhido ***")
+
+    from PySide6.QtWidgets import QDialog, QFileDialog
+
+    from tfedit.interface import exportar_csv as dialogo_mod
+
+    with pasta_temporaria() as pasta:
+        alvo = _criar(pasta, linhas=4)
+        janela = _abrir(pasta, alvo)
+        destino = pasta / "pela_janela.csv"
+
+        original_exec = dialogo_mod.EscolherExportacao.exec
+        original_escolhido = dialogo_mod.EscolherExportacao.escolhido
+        original_arquivo = QFileDialog.getSaveFileName
+        try:
+            dialogo_mod.EscolherExportacao.exec = (
+                lambda self: QDialog.DialogCode.Accepted)
+            dialogo_mod.EscolherExportacao.escolhido = (
+                lambda self: ("|", dialogo_mod.CODIFICACOES[0]))
+            QFileDialog.getSaveFileName = staticmethod(
+                lambda *a, **k: (str(destino), "CSV (*.csv)"))
+
+            checa(janela.exportar_para_csv(), "o comando conclui")
+            checa(destino.is_file(), "*** o arquivo foi gravado no destino ***")
+            lido = _ler_csv(destino, separador="|")
+            checa_igual(lido[0], ["produto", "quantidade", "preco"],
+                        "*** com o separador '|' que foi escolhido ***")
+            checa("Exportado" in janela.barra.currentMessage(),
+                  f"e a barra confirma: {janela.barra.currentMessage()!r}")
+        finally:
+            dialogo_mod.EscolherExportacao.exec = original_exec
+            dialogo_mod.EscolherExportacao.escolhido = original_escolhido
+            QFileDialog.getSaveFileName = original_arquivo
+            _encerrar(janela)
+
+
+def testar_formula_sai_pelo_valor_calculado() -> None:
+    """Uma formula sai no CSV pelo VALOR que o Excel guardou, nao pela formula.
+
+    Um CSV com "=A2+B2" seria um arquivo que so' faz sentido dentro de uma
+    planilha. O xlsx e' montado com o valor em cache (`<v>5</v>`), como o Excel
+    grava -- openpyxl nao grava cache, entao o XML e' remendado aqui.
+    """
+    secao("*** Formula sai pelo valor calculado, nao pela formula ***")
+
+    import re
+    import zipfile
+
+    import openpyxl
+
+    from tfedit.planilha import exportar as exportacao
+
+    with pasta_temporaria() as pasta:
+        alvo = pasta / "formula.xlsx"
+        livro = openpyxl.Workbook()
+        folha = livro.active
+        folha.append(["a", "b", "soma"])
+        folha.append([2, 3, None])
+        folha["C2"] = "=A2+B2"
+        livro.save(alvo)
+
+        # O Excel grava o valor ao lado da formula: <f>..</f><v>5</v>.
+        with zipfile.ZipFile(alvo) as z:
+            partes = {n: z.read(n) for n in z.namelist()}
+        nome = "xl/worksheets/sheet1.xml"
+        xml = partes[nome].decode("utf-8")
+        xml = re.sub(r'<c r="C2"><f>A2\+B2</f><v\s*/></c>',
+                     '<c r="C2"><f>A2+B2</f><v>5</v></c>', xml, count=1)
+        checa('<v>5</v>' in xml, "a formula recebeu o valor em cache")
+        partes[nome] = xml.encode("utf-8")
+        with zipfile.ZipFile(alvo, "w", zipfile.ZIP_DEFLATED) as z:
+            for n, dados in partes.items():
+                z.writestr(n, dados)
+
+        janela = _abrir(pasta, alvo)
+        try:
+            aba_folha = janela.aba_atual.view("planilha").tabela.model().folha
+            celula = aba_folha.celula(2, 3)
+            checa_igual(celula.tipo, "formula",
+                        "a celula e' reconhecida como formula")
+
+            lido = _ler_csv_bytes(exportacao.como_csv(aba_folha))
+            checa_igual(lido[1][2], "5",
+                        "*** no CSV sai 5, o valor, e nao 'A2+B2' ***")
+        finally:
+            _encerrar(janela)
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -578,6 +815,11 @@ def main() -> int:
     testar_gravar_zera_o_desfazer()
     testar_copiar_leva_a_selecao_inteira()
     testar_copiar_escapa_valor_com_tabulacao()
+    testar_exportar_para_csv_com_separador_e_sem_mexer_no_xlsx()
+    testar_codificacao_que_nao_representa_recusa_sem_gravar()
+    testar_bom_e_separador_proibido()
+    testar_menu_exportar_pela_janela()
+    testar_formula_sai_pelo_valor_calculado()
     return resumir()
 
 

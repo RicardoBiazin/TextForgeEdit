@@ -224,6 +224,28 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Exportar uma planilha para CSV
+
+`Arquivo → Exportar para CSV...` grava a aba atual da planilha num CSV novo, com
+o separador e a codificação escolhidos. A planilha aberta **não muda**: o `.xlsx`
+continua byte a byte igual.
+
+- **Separador:** `;` por padrão, que é o que o Excel em português lê sem
+  perguntar. Também `,`, TAB, `|`, `:`, `~`, `^`, `#` ou espaço.
+- **Codificação:** UTF-8 (padrão), UTF-8 com BOM, Windows-1252 ou ISO-8859-1.
+- **Fim de linha:** CRLF, como o Excel grava.
+- **Valores com `;` (ou o separador escolhido) dentro** vão entre aspas, para
+  não virar outra coluna.
+
+O CSV sai com o que a **grade mostra**, edições ainda não gravadas inclusive.
+Uma célula de fórmula sai pelo **valor calculado** que o Excel guardou, e não
+pela fórmula. Se a codificação não escrever algum caractere — um `Ę` em
+ISO-8859-1, por exemplo — a exportação **recusa**, nomeia o caractere e não grava
+nada. Nenhum caractere é trocado por `?` em silêncio.
+
+Exporta **uma aba por vez**: a aba visível. Para outra aba, troque de aba e
+exporte de novo.
+
 ## Copiar funciona na grade de colunas, e a seleção inteira vai junto
 
 Duas falhas do mesmo gesto. Na **grade de colunas de um CSV**, Ctrl+C não copiava

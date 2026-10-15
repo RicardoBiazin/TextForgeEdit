@@ -1119,6 +1119,7 @@ class JanelaPrincipal(QMainWindow):
         acao("Salvar &como...", QKeySequence.StandardKey.SaveAs,
              self.salvar_como, arquivo)
         acao("Salvar &tudo", "Ctrl+Shift+S", self.salvar_tudo, arquivo)
+        acao("E&xportar para CSV...", None, self.exportar_para_csv, arquivo)
         arquivo.addSeparator()
         acao("&Fechar aba", QKeySequence.StandardKey.Close,
              lambda: self.fechar_aba(self.abas.currentIndex()), arquivo)
@@ -1476,6 +1477,57 @@ class JanelaPrincipal(QMainWindow):
             # interna, e a pessoa nunca mais o encontraria.
             return self.salvar_como()
         return self._gravar(aba)
+
+    def exportar_para_csv(self) -> bool:
+        """Grava a aba atual da planilha num CSV novo. A planilha nao muda.
+
+        E' o caminho que faltava para quem precisa do dado em outro programa:
+        o .xlsx continua exatamente como estava, e o CSV sai com o separador e a
+        codificacao escolhidos -- ';' e UTF-8 por padrao, que e' o que o Excel
+        em portugues le sem perguntar nada.
+        """
+        from tfedit.interface.exportar_csv import EscolherExportacao
+        from tfedit.planilha import exportar as exportacao
+        from tfedit.conversao import NaoRepresentavel
+
+        aba = self.aba_atual
+        if aba is None or not aba.e_planilha:
+            self.barra.showMessage(
+                "Exportar para CSV vale para planilhas (.xlsx).", 6000)
+            return False
+
+        grade = aba.view("planilha")
+        folha = grade.tabela.model().folha
+
+        escolha = EscolherExportacao(folha.nome, self)
+        if escolha.exec() != QDialog.DialogCode.Accepted:
+            return False
+        separador, alvo = escolha.escolhido()
+
+        origem = pathlib.Path(aba.caminho)
+        partida = str(origem.with_name(f"{origem.stem} - {folha.nome}.csv"))
+        destino, _ = QFileDialog.getSaveFileName(
+            self, "Exportar para CSV", partida, "CSV (*.csv)")
+        if not destino:
+            return False
+
+        try:
+            linhas, colunas = exportacao.exportar(
+                folha, destino, separador=separador, alvo=alvo)
+        except NaoRepresentavel as erro:
+            QMessageBox.warning(
+                self, "Não foi possível exportar",
+                f"{erro}<br><br>Escolha UTF-8 para exportar sem perder "
+                f"nenhum caractere. Nada foi gravado.")
+            return False
+        except (ValueError, OSError) as erro:
+            QMessageBox.warning(self, "Não foi possível exportar", str(erro))
+            return False
+
+        self.barra.showMessage(
+            f"Exportado: {linhas:,} linha(s) × {colunas} coluna(s) para "
+            f"{pathlib.Path(destino).name}.".replace(",", "."), 8000)
+        return True
 
     def salvar_como(self) -> bool:
         aba = self.aba_atual
