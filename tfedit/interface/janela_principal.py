@@ -1801,7 +1801,13 @@ class JanelaPrincipal(QMainWindow):
                 "Numa planilha, use as teclas de seta ou role até a célula.",
                 6000)
             return
-        total = aba.documento.total_de_linhas
+        # O total do ARQUIVO, com a varredura terminada -- nao o que ja' foi
+        # lido quando o usuario apertou Ctrl+G.
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            total = aba.total_completo()
+        finally:
+            QApplication.restoreOverrideCursor()
         numero, ok = QInputDialog.getInt(
             self, "Ir para linha", f"Linha (1 a {total:,}):".replace(",", "."),
             aba.linha_atual() + 1, 1, total)

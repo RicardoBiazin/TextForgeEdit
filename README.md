@@ -224,6 +224,16 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Ir para linha vai ao fim do arquivo
+
+Em arquivo grande, a varredura do índice ainda pode estar no começo quando a
+caixa de **Ir para linha** (Ctrl+G) abre. O total era lido naquele instante, e
+um arquivo de 143 mil linhas mostrava "1 a 23.926". Agora a caixa espera a
+varredura terminar e usa o total do arquivo inteiro. Ctrl+End também.
+
+O índice é leve: cerca de 0,34 MB por 10 milhões de linhas. Por isso o arquivo
+abre sempre inteiro; não há limite de linhas nem modo parcial.
+
 ## Exportar uma planilha para CSV
 
 `Arquivo → Exportar para CSV...` grava a aba atual da planilha num CSV novo, com

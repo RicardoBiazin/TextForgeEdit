@@ -443,6 +443,26 @@ class Aba(QWidget):
         log.error("indexacao de %s falhou: %s", self.nome, erro)
         self.indexou.emit(self.original.total_de_linhas)
 
+    def total_completo(self) -> int:
+        """O numero de linhas do ARQUIVO, nao o do que a varredura ja' leu.
+
+        DEFEITO RELATADO: "Ir para linha" mostrava "1 a 23.926" num arquivo de
+        143.541 linhas. O total e' lido UMA vez, quando a caixa abre, e a
+        varredura ainda estava no comeco. A caixa aceitava so' ate' 23.926 e o
+        usuario nao chegava ao fim.
+
+        Espera a thread de varredura terminar (ela so' avanca; no pior caso
+        leva segundos num arquivo de 1 GB) e termina o que sobrar na thread
+        principal. Depois disto o total e' o do arquivo inteiro.
+        """
+        if not self.indexando_agora:
+            return self.documento.total_de_linhas
+        if self.indexador is not None:
+            self.indexador.wait()
+        if not self.original.indexacao_completa:
+            self.original.indexar()
+        return self.documento.total_de_linhas
+
     @property
     def indexando_agora(self) -> bool:
         if self.e_planilha:

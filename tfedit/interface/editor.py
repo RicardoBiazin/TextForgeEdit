@@ -331,7 +331,11 @@ class EditorDeslizante(QPlainTextEdit):
         e' o certo -- e' onde o cursor fica no Bloco de Notas, e e' onde alguem
         que aperta Ctrl+End para acrescentar uma linha espera estar.
         """
-        total = max(1, self.janela.documento.total_de_linhas)
+        # Mesmo defeito do "Ir para linha": com a varredura ainda no comeco,
+        # o "fim" seria o fim do que ja' foi lido, e nao o do arquivo.
+        aba = self.parent()
+        total = max(1, aba.total_completo() if hasattr(aba, "total_completo")
+                    else self.janela.documento.total_de_linhas)
         self.ir_para_linha(total - 1)
         # Depois de deslizar, o cursor cai na PRIMEIRA coluna da ultima linha.
         # Ctrl+End no fim do documento significa depois do ultimo caractere.

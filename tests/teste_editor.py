@@ -276,6 +276,76 @@ def testar_ctrl_end_vai_ao_fim_do_DOCUMENTO() -> None:
             janela.close()
             janela.deleteLater()
 
+
+def testar_ir_para_linha_vai_ao_arquivo_inteiro() -> None:
+    """DEFEITO RELATADO: "Ir para linha" parava em 23.926 num arquivo de 143 mil.
+
+    O total era lido uma vez, quando a caixa abria, com a varredura ainda no
+    comeco. O teste abre o arquivo e pede o total ANTES de deixar a varredura
+    terminar sozinha: tem de sair o arquivo inteiro.
+    """
+    secao("*** Ir para linha vai ao fim do ARQUIVO, nao ao que foi lido ***")
+
+    from PySide6.QtWidgets import QInputDialog
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        # Linhas de ~150 bytes: o arquivo passa de 8 MB, que e' o que a
+        # abertura le sincrono (PARTIDA). Abaixo disso a varredura termina
+        # antes de o usuario ver nada, e o caso nao existe.
+        LINHAS = 143_541
+        alvo = tmp / "benef.txt"
+        alvo.write_bytes(b"\r\n".join(
+            f"0000063000000000S0000000007 CLIENTE {i:06} ".encode()
+            + b"x" * 110 for i in range(LINHAS)) + b"\r\n")
+        checa(alvo.stat().st_size > 8 * 1024 * 1024,
+              f"o arquivo tem {alvo.stat().st_size / 1048576:.1f} MB, acima "
+              f"do que a abertura le sozinha")
+
+        # A thread de varredura NAO roda durante a abertura: sem isto ela
+        # termina em 0,1 s e o caso "ainda no comeco" nunca acontece -- o teste
+        # passaria com ou sem a correcao. Com a thread parada, o indice fica
+        # incompleto de verdade, e e' a thread principal que tem de terminar.
+        from tfedit.interface import indexador as indexador_mod
+        arranque = indexador_mod.Indexador.start
+        indexador_mod.Indexador.start = lambda self, *a, **k: None
+        try:
+            janela = JanelaPrincipal()
+            checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
+        finally:
+            indexador_mod.Indexador.start = arranque
+        try:
+            aba = janela.aba_atual
+            checa(not aba.original.indexacao_completa,
+                  "*** precondicao: a varredura ainda NAO terminou ***")
+            # Sem esperar: e' o momento em que o usuario aperta Ctrl+G.
+            total = aba.total_completo()
+            checa_igual(total, LINHAS + 1,
+                        "*** o total e' o do ARQUIVO inteiro, com a varredura "
+                        "terminada ***")
+            checa(aba.original.indexacao_completa,
+                  "e a varredura ficou completa")
+
+            # E a caixa recebe esse total como limite.
+            capturado = []
+            original = QInputDialog.getInt
+
+            def espiao(*args, **kwargs):
+                capturado.append(args[5] if len(args) > 5 else None)
+                return (1, False)
+
+            QInputDialog.getInt = staticmethod(espiao)
+            try:
+                janela.ir_para_linha()
+            finally:
+                QInputDialog.getInt = original
+            checa(capturado and capturado[0] == LINHAS + 1,
+                  f"*** a caixa de Ir para linha vai ate' {capturado} ***")
+        finally:
+            janela.close()
+            janela.deleteLater()
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -283,6 +353,7 @@ def main() -> int:
     testar_sem_edicao_nao_grava()
     testar_margem_e_posicao()
     testar_ctrl_end_vai_ao_fim_do_DOCUMENTO()
+    testar_ir_para_linha_vai_ao_arquivo_inteiro()
     return resumir()
 
 
