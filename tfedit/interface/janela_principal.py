@@ -1431,6 +1431,9 @@ class JanelaPrincipal(QMainWindow):
         if aba is None:
             return
         self.progresso.setVisible(aba.indexando_agora)
+        # O total do rodape cresceu com a varredura, e nada o repintava: ele
+        # ficava no ultimo valor que o cursor mexeu. Repinta agora.
+        self._mostrar_posicao(aba.linha_atual(), 0)
         mb = aba.original.tamanho / (1024 * 1024)
         recado = (f"{aba.nome}: {mb:,.1f} MB, {total_de_linhas:,} linhas. "
                   f"O arquivo continua no disco.".replace(",", "."))
@@ -1813,6 +1816,10 @@ class JanelaPrincipal(QMainWindow):
             aba.linha_atual() + 1, 1, total)
         if ok:
             aba.ir_para_linha(numero - 1)
+            # Ir para linha DESLIZA a fatia, e o deslize suprime o sinal de
+            # posicao. Sem isto o rodape ficava com o total de antes: "Ln
+            # 25.998 de 23.926" -- a linha passou do total que o rodape mostrava.
+            self._mostrar_posicao(aba.linha_atual(), 0)
 
     def _ir_para_deslocamento(self, aba) -> None:
         """No hexadecimal, "ir para" é por byte, e não por linha.

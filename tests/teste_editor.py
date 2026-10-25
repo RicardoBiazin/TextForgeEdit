@@ -335,13 +335,26 @@ def testar_ir_para_linha_vai_ao_arquivo_inteiro() -> None:
                 capturado.append(args[5] if len(args) > 5 else None)
                 return (1, False)
 
-            QInputDialog.getInt = staticmethod(espiao)
+            # Escolhe uma linha LA' NO FIM: o deslize da fatia acontece aqui.
+            ALVO = LINHAS - 10
+            def escolhe_o_fim(*args, **kwargs):
+                capturado.append(args[5] if len(args) > 5 else None)
+                return (ALVO, True)
+
+            QInputDialog.getInt = staticmethod(escolhe_o_fim)
             try:
                 janela.ir_para_linha()
             finally:
                 QInputDialog.getInt = original
             checa(capturado and capturado[0] == LINHAS + 1,
                   f"*** a caixa de Ir para linha vai ate' {capturado} ***")
+            checa_igual(aba.linha_atual(), ALVO - 1,
+                        "o cursor foi para a linha escolhida")
+            rodape = janela.rotulo_posicao.text()
+            checa(f"Ln {ALVO:,}".replace(",", ".") in rodape
+                  and f"de {LINHAS + 1:,}".replace(",", ".") in rodape,
+                  f"*** o rodape mostra a linha e o TOTAL do arquivo: "
+                  f"{rodape!r} ***")
         finally:
             janela.close()
             janela.deleteLater()

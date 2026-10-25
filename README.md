@@ -231,6 +231,8 @@ caixa de **Ir para linha** (Ctrl+G) abre. O total era lido naquele instante, e
 um arquivo de 143 mil linhas mostrava "1 a 23.926". Agora a caixa espera a
 varredura terminar e usa o total do arquivo inteiro. Ctrl+End também.
 
+O rodapé (`Ln … de …`) também acompanha o total: antes, depois de um Ir para linha ou de a varredura terminar, ele mostrava o total antigo.
+
 O índice é leve: cerca de 0,34 MB por 10 milhões de linhas. Por isso o arquivo
 abre sempre inteiro; não há limite de linhas nem modo parcial.
 
