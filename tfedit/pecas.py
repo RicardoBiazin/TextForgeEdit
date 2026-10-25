@@ -32,9 +32,11 @@ que o cursor esta'.
 from __future__ import annotations
 
 import contextlib
+import re
 from dataclasses import dataclass
 
 from tfedit.original import Original
+from tfedit.original import (contar_quebras, posicoes_de_quebra)
 from tfedit import log_interno
 
 
@@ -42,6 +44,16 @@ log = log_interno.obter(__name__)
 
 ORIGINAL = "original"
 ADICIONADO = "adicionado"
+
+
+
+#: Separa as linhas de um trecho pela MESMA regra do indice (ver
+#: `original.posicoes_de_quebra`): CRLF, LF ou CR sozinho.
+_SEPARADOR_COM_CR = re.compile(rb"\r\n|\n|\r")
+
+
+def _tem_quebra(dados: bytes) -> bool:
+    return b"\n" in dados or b"\r" in dados
 
 
 @dataclass(frozen=True, slots=True)
@@ -204,14 +216,72 @@ class Documento:
         return bytes(self._adicionado[inicio:fim])
 
     def _linhas_da_peca(self, peca: Peca, salto: int, quantos: int) -> int:
-        """Quebras dentro de um PEDACO de uma peca."""
+        """Quebras dentro de um pedaco INTERNO de uma peca.
+
+        Interno: o pedaco termina antes do fim da peca, entao o byte seguinte
+        no documento e' o byte seguinte na propria fonte -- e' o que a regra do
+        CR sozinho precisa saber. O pedaco que vai ate' o fim da peca e' contado
+        por `_contar_peca`, que olha a peca vizinha.
+        """
         if quantos <= 0:
             return 0
-        if peca.fonte == ORIGINAL:
-            inicio = peca.inicio + salto
-            return self.original.linhas_em(inicio, inicio + quantos)
         inicio = peca.inicio + salto
-        return self._adicionado.count(b"\n", inicio, inicio + quantos)
+        if peca.fonte == ORIGINAL:
+            return self.original.linhas_em(inicio, inicio + quantos)
+        fim = inicio + quantos
+        seguinte = (self._adicionado[fim] if fim < len(self._adicionado)
+                    else None)
+        return contar_quebras(self._adicionado, inicio, fim, seguinte,
+                              com_cr=self.original.quebra_em_cr)
+
+    def _contar_peca(self, indice: int) -> int:
+        """Quebras da peca INTEIRA, olhando o byte seguinte NO DOCUMENTO.
+
+        A regra do CR sozinho depende do byte depois dele. No fim de uma peca,
+        esse byte e' o comeco da PROXIMA peca -- e nao o byte seguinte na fonte
+        dela. Uma insercao de "x\r" seguida, mais adiante no buffer, por outra
+        que comeca com "\n", contaria errado olhando a fonte.
+        """
+        peca = self._pecas[indice]
+        if peca.tamanho <= 0:
+            return 0
+        proxima = (self._pecas[indice + 1]
+                   if indice + 1 < len(self._pecas) else None)
+        seguinte = (self._bytes_da_peca(proxima, 0, 1)[0]
+                    if proxima is not None and proxima.tamanho else None)
+        a = peca.inicio
+        b = peca.inicio + peca.tamanho
+        if peca.fonte == ADICIONADO:
+            return contar_quebras(self._adicionado, a, b, seguinte,
+                                  com_cr=self.original.quebra_em_cr)
+        # Na fonte ORIGINAL, `linhas_em` ja' aplica a regra olhando o byte
+        # seguinte do ARQUIVO. So' o ultimo byte pode divergir do documento.
+        contagem = self.original.linhas_em(a, b)
+        if (self.original.quebra_em_cr
+                and self.original.ler(b - 1, b) == b"\r"):
+            no_arquivo = self.original.ler(b, b + 1)
+            no_arquivo = no_arquivo[0] if no_arquivo else None
+            contagem += int(seguinte != 0x0A) - int(no_arquivo != 0x0A)
+        return contagem
+
+    def _recontar(self, *indices: int) -> None:
+        """Recalcula as pecas cuja VIZINHA mudou, e o total junto.
+
+        Depois de inserir ou remover, so' a peca antes da juncao e a peca
+        inserida podem ter ganhado ou perdido uma quebra pela regra do CR. As
+        demais nao mudaram de vizinho.
+        """
+        vistos = set()
+        for indice in indices:
+            if indice in vistos or not 0 <= indice < len(self._pecas):
+                continue
+            vistos.add(indice)
+            peca = self._pecas[indice]
+            nova = self._contar_peca(indice)
+            if nova != peca.linhas:
+                self._linhas += nova - peca.linhas
+                self._pecas[indice] = Peca(peca.fonte, peca.inicio,
+                                           peca.tamanho, nova)
 
     # ==================================================================
     # Leitura
@@ -258,14 +328,16 @@ class Documento:
             antes = self.original.linhas_ate(peca.inicio)
             alvo = self.original.offset_da_linha(antes + quantas)
             return min(alvo - peca.inicio, peca.tamanho)
-        posicao = peca.inicio
         limite = peca.inicio + peca.tamanho
-        for _ in range(quantas):
-            quebra = self._adicionado.find(b"\n", posicao, limite)
-            if quebra < 0:
-                return peca.tamanho
-            posicao = quebra + 1
-        return posicao - peca.inicio
+        faltam = quantas
+        for quebra in posicoes_de_quebra(self._adicionado, peca.inicio, limite,
+                                         com_cr=self.original.quebra_em_cr):
+            faltam -= 1
+            if faltam == 0:
+                return quebra + 1 - peca.inicio
+        # A ultima quebra pode ser um CR no fim da peca que so' e' quebra por
+        # causa do vizinho: ela termina exatamente no fim da peca.
+        return peca.tamanho
 
     def linha(self, n: int) -> bytes:
         """Os bytes da linha `n`, SEM o terminador."""
@@ -295,10 +367,15 @@ class Documento:
         b = self.offset_da_linha(fim) if fim < self.total_de_linhas \
             else self._tamanho
         bruto = self.ler(a, b)
-        linhas = bruto.split(b"\n")
+        if self.original.quebra_em_cr:
+            # A MESMA regra do indice: CRLF, LF ou CR sozinho.
+            linhas = _SEPARADOR_COM_CR.split(bruto)
+        else:
+            linhas = [ln[:-1] if ln.endswith(b"\r") else ln
+                      for ln in bruto.split(b"\n")]
         if fim < self.total_de_linhas and linhas and linhas[-1] == b"":
             linhas.pop()          # a quebra final pertence a' linha seguinte
-        return [ln[:-1] if ln.endswith(b"\r") else ln for ln in linhas]
+        return linhas
 
     def linha_do_offset(self, offset: int) -> int:
         """Em que linha (base zero) cai este offset."""
@@ -363,16 +440,20 @@ class Documento:
             self._adicionado.extend(dados)
             self._pecas[anterior] = Peca(
                 ADICIONADO, velha.inicio, velha.tamanho + len(dados),
-                velha.linhas + dados.count(b"\n"))
+                velha.linhas)
+            self._tamanho += len(dados)
+            self._cursor = None
+            # A peca cresceu: recontada inteira, com o vizinho de agora.
+            self._recontar(anterior)
         else:
             corte = self._partir(offset)
             inicio = len(self._adicionado)
             self._adicionado.extend(dados)
-            self._pecas.insert(corte, Peca(ADICIONADO, inicio, len(dados),
-                                           dados.count(b"\n")))
-        self._tamanho += len(dados)
-        self._linhas += dados.count(b"\n")
-        self._cursor = None
+            self._pecas.insert(corte, Peca(ADICIONADO, inicio, len(dados), 0))
+            self._tamanho += len(dados)
+            self._cursor = None
+            # A peca nova e a de antes dela (que ganhou outro vizinho).
+            self._recontar(corte - 1, corte)
 
     def _aplicar_remocao(self, offset: int, quantos: int) -> bytes:
         if quantos <= 0:
@@ -381,10 +462,15 @@ class Documento:
         removidos = self.ler(offset, offset + quantos)
         inicio = self._partir(offset)
         fim = self._partir(offset + quantos)
+        # As quebras que saem sao as das pecas removidas, como foram contadas
+        # NO documento -- e nao uma recontagem dos bytes soltos, que erraria um
+        # CR no fim do trecho.
+        self._linhas -= sum(p.linhas for p in self._pecas[inicio:fim])
         del self._pecas[inicio:fim]
         self._tamanho -= quantos
-        self._linhas -= removidos.count(b"\n")
         self._cursor = None
+        # A peca antes do buraco agora encosta em outra.
+        self._recontar(inicio - 1)
         return removidos
 
     @contextlib.contextmanager
@@ -428,7 +514,7 @@ class Documento:
         if ultima.offset + len(ultima.inserido) != edicao.offset:
             return False
         ultima.inserido += edicao.inserido
-        if b"\n" in edicao.inserido:
+        if _tem_quebra(edicao.inserido):
             ultima.aberta = False
         return True
 
@@ -448,7 +534,7 @@ class Documento:
             return
         self._aplicar_insercao(offset, texto)
         nova = Edicao("inserir", offset, inserido=texto,
-                      aberta=b"\n" not in texto)
+                      aberta=not _tem_quebra(texto))
         if not self._fundir(nova):
             self._registrar(nova)
 

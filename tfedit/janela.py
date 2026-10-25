@@ -39,6 +39,7 @@ so' mostra. E' o que permite testar a parte dificil sem tela.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 from tfedit import codificacao
@@ -56,6 +57,11 @@ LINHAS_DA_JANELA = 5_000
 #: Distancia da borda que dispara o deslize. Sem folga, rolar uma linha para fora
 #: recarregaria a janela a cada tecla de seta na fronteira.
 FOLGA = 500
+
+
+#: Os terminadores de linha que `codificacao.para_lf` transforma em `\n`, na
+#: mesma ordem e pela mesma regra: CRLF, LF ou CR sozinho.
+_TERMINADOR = re.compile(r"\r\n|\n|\r")
 
 
 @dataclass(frozen=True)
@@ -148,24 +154,62 @@ class JanelaViva:
         return bruto.decode(self.perfil.codec, errors="replace")
 
     def _codificar(self, texto: str) -> bytes:
-        """Texto da fatia de volta a bytes, com o fim de linha do ARQUIVO.
+        """Texto da fatia de volta a bytes, cada linha com o SEU fim de linha.
 
-        Dentro da janela o texto tem so' quebras `\\n` -- e' o que o
-        `QPlainTextEdit` usa, e nao ha' como pedir a ele que preserve CRLF. Na
-        volta, elas sao reexpandidas para o terminador do perfil.
+        Dentro da janela o texto so' tem `\n` -- e' o que o `QPlainTextEdit`
+        usa. Na volta, cada linha recebe o terminador que ela TINHA no arquivo:
+        CRLF, LF ou CR sozinho. So' uma linha que nao existia antes recebe o
+        terminador dominante do perfil.
 
-        DUAS CONSEQUENCIAS que precisam estar escritas:
+        DEFEITO QUE ISTO CORRIGE, medido num arquivo real de fim de linha
+        misto (119.615 CR, 23.923 CRLF): inserir UM caractere e salvar
+        convertia 833 CRLF em CR. A versao anterior reexpandia a fatia inteira
+        com o terminador dominante, e o corte de prefixo e sufixo em `aplicar`
+        so' protegia o que vinha antes do primeiro e depois do ultimo CRLF da
+        fatia. Tudo no meio era regravado, sem aviso.
 
-        * O perfil TEM de vir da deteccao. Com `fim_de_linha` errado, o trecho
-          reescrito sai com quebras que o arquivo nao tinha -- um teste que
-          fabricava o perfil a mao fez exatamente isso, e foi assim que a
-          armadilha apareceu.
-        * Num arquivo de fim de linha MISTO, as quebras DENTRO do trecho
-          alterado viram a dominante. As de fora sobrevivem, porque o corte de
-          prefixo e sufixo em `aplicar` nunca chega ate' elas.
+        O alinhamento entre as linhas antigas e as novas e' pelo prefixo e
+        pelo sufixo de linhas IGUAIS: as linhas fora da regiao editada ficam
+        com o terminador exato, e as de dentro herdam o da linha antiga na
+        mesma posicao.
         """
-        return codificacao.de_lf(texto, self.perfil.fim_de_linha).encode(
-            self.perfil.codec, errors="replace")
+        dominante = self.perfil.fim_de_linha
+        if self.recorte is None:
+            return codificacao.de_lf(texto, dominante).encode(
+                self.perfil.codec, errors="replace")
+
+        velhas = self.recorte.texto.split("\n")
+        novas = texto.split("\n")
+        terminadores = _TERMINADOR.findall(
+            self._decodificar(self.recorte.bytes_originais))
+
+        limite = min(len(velhas), len(novas))
+        prefixo = 0
+        while prefixo < limite and velhas[prefixo] == novas[prefixo]:
+            prefixo += 1
+        sufixo = 0
+        while (sufixo < limite - prefixo
+               and velhas[-1 - sufixo] == novas[-1 - sufixo]):
+            sufixo += 1
+        desvio = len(novas) - len(velhas)
+
+        def terminador(j: int) -> str:
+            if j < prefixo:
+                k = j
+            elif j >= len(novas) - sufixo:
+                k = j - desvio
+            elif j < len(velhas) - sufixo:
+                k = j
+            else:
+                return dominante
+            return terminadores[k] if 0 <= k < len(terminadores) else dominante
+
+        partes = []
+        for j, linha in enumerate(novas):
+            partes.append(linha)
+            if j < len(novas) - 1:
+                partes.append(terminador(j))
+        return "".join(partes).encode(self.perfil.codec, errors="replace")
 
     # ==================================================================
     # Escrever de volta

@@ -224,6 +224,40 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## CR sozinho é quebra de linha, e salvar preserva o fim de linha de cada linha
+
+**Quebra de linha** passou a ter uma regra só no programa inteiro: o `
+`, ou um
+`` que **não** venha seguido de `
+`. Num CRLF a quebra é o `
+`; um CR sozinho
+(Mac antigo e muito export de sistema legado) também é quebra.
+
+O defeito: um arquivo de 143.541 linhas abria como 23.926, e o fim do editor
+mostrava 48.915. Ele tinha **119.615 quebras só com CR**, 23.923 CRLF e 2 LF. O
+índice contava apenas o `
+`; o editor normalizava o CR e mostrava as linhas
+certas. Número de linha, Ir para linha e Ctrl+End ficavam presos no total
+errado. Agora o índice conta 143.541, em 0,15 s.
+
+A regra mantém o que o modelo inteiro usa: cada quebra é identificada por **um**
+byte, e a linha seguinte começa logo depois dele. Um CRLF partido entre dois
+blocos da varredura conta uma vez só, porque a regra olha o byte seguinte no
+arquivo, e não no bloco. Na tabela de peças, a peça antes de cada edição é
+recontada olhando a peça vizinha. Um teste com 600 edições ao acaso, com
+desfazer e refazer, compara a contagem com um cálculo do zero a cada passo.
+
+Em **UTF-16** a regra fica desligada: o byte `0x0D` aparece dentro de caracteres
+comuns (`č` é `0D 01`).
+
+### Salvar não troca mais os terminadores de linhas não tocadas
+
+Medido no mesmo arquivo: inserir **um** caractere e salvar convertia **833 CRLF
+em CR**. A fatia era regravada com o terminador dominante, e tudo entre o
+primeiro e o último ponto diferente era reescrito, sem aviso. Agora cada linha
+volta com o terminador que tinha; só uma linha **nova** recebe o dominante.
+Inserir um caractere muda exatamente um byte.
+
 ## Ir para linha vai ao fim do arquivo
 
 Em arquivo grande, a varredura do índice ainda pode estar no começo quando a

@@ -369,6 +369,159 @@ def testar_indice_incompleto() -> None:
 # ===========================================================================
 
 
+
+def _linhas_de_verdade(dados: bytes) -> list[bytes]:
+    """O ORACULO: as linhas pela regra, calculadas do zero sobre os bytes."""
+    import re
+    return re.split(rb"\r\n|\n|\r", dados)
+
+
+def testar_cr_sozinho_e_quebra_de_linha() -> None:
+    """DEFEITO RELATADO: 143.541 linhas abriam como 23.926.
+
+    O arquivo tinha 119.615 quebras so' com CR, 23.923 CRLF e 2 LF. O indice
+    contava so' o `\n`. A regra agora: quebra e' o `\n`, ou um `\r` que nao
+    venha seguido de `\n`.
+    """
+    secao("*** CR sozinho, CRLF e LF: cada um e' UMA quebra ***")
+
+    from tfedit.original import Original
+
+    conteudo = b"um\rdois\r\ntres\nquatro\rcinco\r\n\rseis"
+    with pasta_temporaria() as pasta:
+        alvo = pasta / "misto.txt"
+        alvo.write_bytes(conteudo)
+        original = Original(alvo)
+        try:
+            original.indexar()
+            esperado = _linhas_de_verdade(conteudo)
+            checa_igual(original.total_de_linhas, len(esperado),
+                        f"*** {len(esperado)} linhas: CR, CRLF e LF contam "
+                        f"uma vez cada ***")
+            for n, linha in enumerate(esperado):
+                a = original.offset_da_linha(n)
+                checa(original.ler(a, a + len(linha)) == linha,
+                      f"a linha {n + 1} comeca no lugar certo: {linha!r}")
+            checa_igual(original.linhas_ate(original.tamanho),
+                        len(esperado) - 1, "linhas_ate conta as mesmas")
+        finally:
+            original.fechar()
+
+
+def testar_crlf_partido_entre_blocos_conta_uma_vez() -> None:
+    """Um CRLF cortado ao meio pela varredura nao pode virar duas quebras.
+
+    A varredura le' em blocos. Se um bloco termina exatamente entre o `\r` e o
+    `\n`, olhar so' o bloco veria um CR sozinho -- uma quebra a mais.
+    """
+    secao("*** CRLF partido entre dois blocos da varredura ***")
+
+    from tfedit.original import Original
+
+    conteudo = b"aaaa\r\nbbbb\r\ncccc"
+    corte = conteudo.index(b"\r\n") + 1        # entre o \r e o \n
+    with pasta_temporaria() as pasta:
+        alvo = pasta / "partido.txt"
+        alvo.write_bytes(conteudo)
+        original = Original(alvo)
+        try:
+            original.indexar(corte)            # o primeiro bloco acaba no \r
+            original.indexar()
+            checa_igual(original.total_de_linhas, 3,
+                        "*** 3 linhas, e nao 4: o CR do CRLF nao conta ***")
+            checa_igual(original.offset_da_linha(1), conteudo.index(b"bbbb"),
+                        "e a segunda linha comeca depois do LF")
+        finally:
+            original.fechar()
+
+
+def testar_utf16_nao_quebra_no_0x0d() -> None:
+    """Em UTF-16 o byte 0x0D aparece DENTRO de caracteres: nao e' quebra."""
+    secao("*** Em UTF-16 o byte 0x0D de um caractere nao parte a linha ***")
+
+    from tfedit import codificacao
+    from tfedit.original import Original
+
+    conteudo = "abč\ndef".encode("utf-16-le")      # č = 0D 01
+    checa(b"\x0d" in conteudo, "o arquivo tem o byte 0x0D dentro do č")
+    checa(not codificacao.cr_e_quebra("utf-16-le"),
+          "a regra do CR fica desligada em UTF-16")
+    with pasta_temporaria() as pasta:
+        alvo = pasta / "u16.txt"
+        alvo.write_bytes(conteudo)
+        original = Original(alvo)
+        try:
+            original.quebra_em_cr = False
+            original.indexar()
+            checa_igual(original.total_de_linhas, 2,
+                        "*** 2 linhas: o č nao partiu nada ***")
+        finally:
+            original.fechar()
+
+
+def testar_edicoes_aleatorias_mantem_a_contagem_com_cr() -> None:
+    """Edicoes quaisquer com CR, LF e CRLF nunca desalinham a contagem.
+
+    E' o ponto mais delicado: a regra do CR depende do byte SEGUINTE, e numa
+    tabela de pecas o byte seguinte pode estar em outra peca. Uma insercao que
+    termina em `\r` antes de uma peca que comeca com `\n` forma um CRLF -- uma
+    quebra a menos. O teste faz centenas de edicoes ao acaso, com desfazer e
+    refazer, e a cada passo compara com o oraculo calculado do zero.
+    """
+    secao("*** Edicoes ao acaso com CR/LF/CRLF: contagem sempre exata ***")
+
+    import random
+
+    from tfedit.original import Original
+    from tfedit.pecas import Documento
+
+    sorte = random.Random(20261025)
+    pedacos = [b"a", b"bc", b"\r", b"\n", b"\r\n", b"x\r", b"\ny", b"\r\r"]
+    base = b"um\rdois\r\ntres\nquatro\r\n\rcinco\r"
+    erros = []
+    with pasta_temporaria() as pasta:
+        alvo = pasta / "base.txt"
+        alvo.write_bytes(base)
+        original = Original(alvo)
+        try:
+            original.indexar()
+            doc = Documento(original)
+            for passo in range(600):
+                acao = sorte.random()
+                if acao < 0.45 or doc.tamanho == 0:
+                    dados = b"".join(sorte.choice(pedacos)
+                                     for _ in range(sorte.randint(1, 3)))
+                    doc.inserir(sorte.randint(0, doc.tamanho), dados)
+                elif acao < 0.8:
+                    inicio = sorte.randint(0, doc.tamanho - 1)
+                    doc.remover(inicio, sorte.randint(1, 3))
+                elif acao < 0.9 and doc.pode_desfazer:
+                    doc.desfazer()
+                elif doc.pode_refazer:
+                    doc.refazer()
+
+                bruto = doc.ler(0, doc.tamanho)
+                verdade = _linhas_de_verdade(bruto)
+                if doc.total_de_linhas != len(verdade):
+                    erros.append((passo, doc.total_de_linhas, len(verdade),
+                                  bruto))
+                    break
+                if doc.faixa(0, doc.total_de_linhas) != verdade:
+                    erros.append((passo, "faixa", bruto))
+                    break
+                for n in (0, len(verdade) // 2, len(verdade) - 1):
+                    if doc.linha(n) != verdade[n]:
+                        erros.append((passo, "linha", n, bruto))
+                        break
+                if erros:
+                    break
+        finally:
+            original.fechar()
+
+    checa(not erros,
+          f"*** 600 edicoes com CR/LF/CRLF e a contagem bate com o oraculo "
+          f"em todas ***" + (f" -- divergiu: {erros[0]!r}" if erros else ""))
+
 def main() -> int:
     testar_indice()
     testar_ida_e_volta()
@@ -379,6 +532,10 @@ def main() -> int:
     testar_gravar_editado()
     testar_memoria()
     testar_indice_incompleto()
+    testar_cr_sozinho_e_quebra_de_linha()
+    testar_crlf_partido_entre_blocos_conta_uma_vez()
+    testar_utf16_nao_quebra_no_0x0d()
+    testar_edicoes_aleatorias_mantem_a_contagem_com_cr()
     return resumir()
 
 

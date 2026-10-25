@@ -171,6 +171,17 @@ def _do_texto(texto: str) -> dict:
     return {"fim_de_linha": dominante, "misto": tipos > 1}
 
 
+def cr_e_quebra(codec: str) -> bool:
+    """O CR sozinho conta como quebra de linha nesta codificacao?
+
+    So' nas de UM byte por unidade (UTF-8, cp1252, Latin-1...). Em UTF-16 e
+    UTF-32 o byte 0x0D aparece dentro de caracteres comuns -- "č" em UTF-16 LE
+    e' `0D 01` --, e o indice, que trabalha em bytes, partiria linhas no meio.
+    """
+    nome = codec.lower().replace("_", "-")
+    return not (nome.startswith("utf-16") or nome.startswith("utf-32"))
+
+
 def para_lf(texto: str) -> str:
     """Normaliza para \\n. O editor trabalha so' com \\n internamente."""
     return texto.replace(CRLF, LF).replace(CR, LF)

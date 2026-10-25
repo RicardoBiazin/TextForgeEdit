@@ -42,6 +42,7 @@ import hashlib
 import mmap
 import os
 import pathlib
+import re
 import time
 from dataclasses import dataclass
 from typing import Callable
@@ -54,6 +55,71 @@ PASSO = 1024
 BLOCO = 4 * 1024 * 1024
 
 QUEBRA = 0x0A          # \n
+RETORNO = 0x0D         # \r
+
+#: O QUE E' UMA QUEBRA DE LINHA, em UMA regra para o programa inteiro: o `\n`,
+#: ou um `\r` que NAO venha seguido de `\n`. Num CRLF a quebra e' o `\n`; um CR
+#: sozinho (Mac antigo, e muito export de sistema legado) tambem e' quebra.
+#:
+#: DEFEITO RELATADO: um arquivo de 143.541 linhas abria com 23.926. Ele tinha
+#: 119.615 quebras so' com CR, 23.923 CRLF e 2 LF. O indice contava apenas o
+#: `\n`; o editor (que normaliza CR para `\n`) mostrava as linhas certas, e a
+#: numeracao, o Ir para linha e o Ctrl+End ficavam presos no numero errado.
+#:
+#: A regra mantem o invariante que o modelo inteiro usa: cada quebra e'
+#: identificada por UM byte, e a linha seguinte comeca logo depois dele.
+#: Num CRLF o byte e' o `\n`, entao o `\r` dele nunca conta.
+_QUEBRA_COM_CR = re.compile(rb"\n|\r(?!\n)")
+
+
+def posicoes_de_quebra(dados, inicio: int, fim: int, *, com_cr: bool = True):
+    """Gera a posicao de cada byte de quebra em [inicio, fim) de `dados`.
+
+    `dados` e' qualquer coisa com protocolo de buffer: o mmap do arquivo ou o
+    `bytearray` das insercoes. A regra olha o byte SEGUINTE a `fim` quando ele
+    existe: um `\r` no ultimo byte do trecho, seguido de `\n` logo depois, NAO e'
+    quebra -- a quebra e' aquele `\n`, que pertence ao trecho seguinte. E' isso
+    que faz um CRLF partido entre dois blocos da varredura contar uma vez so'.
+    """
+    if not com_cr:
+        posicao = inicio
+        while True:
+            quebra = dados.find(b"\n", posicao, fim)
+            if quebra < 0:
+                return
+            yield quebra
+            posicao = quebra + 1
+    tamanho = len(dados)
+    for casamento in _QUEBRA_COM_CR.finditer(dados, inicio, fim):
+        posicao = casamento.start()
+        # Com `endpos`, a expressao enxerga o fim do trecho como fim do texto,
+        # e o `(?!\n)` passa. Aqui se olha o byte de verdade.
+        if (posicao == fim - 1 and dados[posicao] == RETORNO
+                and fim < tamanho and dados[fim] == QUEBRA):
+            continue
+        yield posicao
+
+
+def contar_quebras(dados, inicio: int, fim: int, seguinte: int | None, *,
+                   com_cr: bool = True) -> int:
+    """Quantas quebras ha' em [inicio, fim), com `seguinte` sendo o byte DEPOIS.
+
+    `seguinte` e' passado por quem chama porque, numa tabela de pecas, o byte
+    seguinte no DOCUMENTO pode nao ser o byte seguinte na fonte da peca.
+    `None` quando o trecho termina o documento.
+    """
+    if fim <= inicio:
+        return 0
+    contagem = dados.count(b"\n", inicio, fim)
+    if not com_cr:
+        return contagem
+    retornos = dados.count(b"\r", inicio, fim)
+    if not retornos:
+        return contagem
+    contagem += retornos - dados.count(b"\r\n", inicio, fim)
+    if dados[fim - 1] == RETORNO and seguinte == QUEBRA:
+        contagem -= 1
+    return contagem
 
 #: Quanto se le' de CADA PONTA para a assinatura. 1 MB de cada lado custa
 #: milissegundos num SSD e pega toda reescrita real: um log ganha linhas no fim,
@@ -132,7 +198,13 @@ class Original:
 
         #: marcadores[k] = offset onde comeca a linha k * PASSO.
         self._marcadores: list[int] = [0]
-        self._quebras = 0        # quantos \n ja' foram contados
+        self._quebras = 0        # quantas quebras ja' foram contadas
+        #: A regra do CR sozinho vale para codificacoes de UM byte por unidade.
+        #: Em UTF-16 o byte 0x0D aparece dentro de caracteres comuns -- "č" e'
+        #: `0D 01` --, e conta-lo partiria linhas no meio. Quem abre o arquivo
+        #: decide pela codificacao detectada, ANTES de a varredura passar da
+        #: partida.
+        self.quebra_em_cr = True
         self._varrido = 0        # ate' que offset o indice esta' construido
         self._fechado = False
 
@@ -290,17 +362,14 @@ class Original:
                 return False
             fim = min(self._varrido + min(BLOCO, restante), self.tamanho)
             posicao = self._varrido
-            while True:
-                quebra = self._mapa.find(b"\n", posicao, fim)
-                if quebra < 0:
-                    break
+            for quebra in posicoes_de_quebra(self._mapa, posicao, fim,
+                                             com_cr=self.quebra_em_cr):
                 self._quebras += 1
                 # A linha que COMECA depois desta quebra e' a de numero
                 # `_quebras`. Guarda-se o marcador quando ela e' multipla do
                 # passo.
                 if self._quebras % PASSO == 0:
                     self._marcadores.append(quebra + 1)
-                posicao = quebra + 1
             restante -= fim - self._varrido
             self._varrido = fim
         return self.indexacao_completa
@@ -317,13 +386,14 @@ class Original:
         marcador = min(n // PASSO, len(self._marcadores) - 1)
         posicao = self._marcadores[marcador]
         faltam = n - marcador * PASSO
-        while faltam > 0:
-            quebra = self._mapa.find(b"\n", posicao, self.tamanho)
-            if quebra < 0:
-                return self.tamanho
-            posicao = quebra + 1
+        if faltam <= 0:
+            return posicao
+        for quebra in posicoes_de_quebra(self._mapa, posicao, self.tamanho,
+                                         com_cr=self.quebra_em_cr):
             faltam -= 1
-        return posicao
+            if faltam == 0:
+                return quebra + 1
+        return self.tamanho
 
     def linhas_ate(self, offset: int) -> int:
         """Quantas quebras de linha existem em [0, offset).
@@ -348,12 +418,10 @@ class Original:
                 alto = meio - 1
         contagem = baixo * PASSO
         posicao = self._marcadores[baixo]
-        while True:
-            quebra = self._mapa.find(b"\n", posicao, offset)
-            if quebra < 0:
-                return contagem
+        for _ in posicoes_de_quebra(self._mapa, posicao, offset,
+                                    com_cr=self.quebra_em_cr):
             contagem += 1
-            posicao = quebra + 1
+        return contagem
 
     def linhas_em(self, inicio: int, fim: int) -> int:
         """Quebras de linha dentro de [inicio, fim)."""

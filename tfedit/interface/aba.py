@@ -190,6 +190,9 @@ class Aba(QWidget):
             self.cfg.get("soltar_arquivo_apos_s", 20))
         self.perfil = codificacao.detectar(
             self.original.ler(0, codificacao.SONDAGEM))
+        # ANTES da primeira varredura: a regra do CR sozinho depende da
+        # codificacao, e o indice nao e' refeito depois.
+        self.original.quebra_em_cr = codificacao.cr_e_quebra(self.perfil.codec)
         # Um primeiro pedaco SINCRONO, so' o bastante para a fatia inicial
         # existir. Sem ele a aba abriria vazia e so' encheria no primeiro sinal
         # de progresso.
@@ -513,6 +516,7 @@ class Aba(QWidget):
         # apontavam para ele. Reabrir e reindexar antes de qualquer leitura e'
         # obrigatorio -- ver `Documento.confirmar_gravacao`.
         novo = Original(alvo)
+        novo.quebra_em_cr = codificacao.cr_e_quebra(self.perfil.codec)
         novo.indexar()
         self.original = novo
         rascunho_antigo = self.caminho if self.e_rascunho else None
@@ -759,6 +763,10 @@ class Aba(QWidget):
         # offsets -- em UTF-8 os acentos passaram a ocupar dois bytes. As pecas
         # e o indice antigos apontam para posicoes que nao existem mais.
         novo = Original(self.caminho)
+        # A codificacao do arquivo NOVO decide: converter para UTF-16 muda a
+        # regra do CR sozinho.
+        novo.quebra_em_cr = codificacao.cr_e_quebra(codificacao.detectar(
+            novo.ler(0, codificacao.SONDAGEM)).codec)
         novo.indexar()
         self.original = novo
         self.documento.confirmar_gravacao(novo)

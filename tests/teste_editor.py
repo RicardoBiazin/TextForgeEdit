@@ -359,6 +359,128 @@ def testar_ir_para_linha_vai_ao_arquivo_inteiro() -> None:
             janela.close()
             janela.deleteLater()
 
+
+def _arquivo_misto(pasta, linhas: int):
+    """CR sozinho em 2 de cada 3 linhas, CRLF na terceira -- como o relatado."""
+    corpo = b"".join(
+        f"registro {i:06} ".encode() + b"y" * 40
+        + (b"\r\n" if i % 3 == 0 else b"\r")
+        for i in range(linhas))
+    alvo = pasta / "misto.txt"
+    alvo.write_bytes(corpo)
+    return alvo, corpo
+
+
+def testar_arquivo_com_cr_sozinho_no_editor() -> None:
+    """DEFEITO RELATADO: 143.541 linhas abriam como 23.926 (e 48.915 no fim).
+
+    O arquivo tinha CR sozinho como quebra na maior parte das linhas. O indice
+    so' contava `\n`; o editor normalizava o CR e mostrava as linhas certas --
+    e o numero de linha, o Ir para linha e o Ctrl+End ficavam presos no total
+    errado.
+    """
+    secao("*** Arquivo com CR sozinho: total, Ctrl+End e numeracao certos ***")
+
+    import re
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        LINHAS = 30_000
+        alvo, corpo = _arquivo_misto(tmp, LINHAS)
+        verdade = re.split(rb"\r\n|\n|\r", corpo)
+
+        janela = JanelaPrincipal()
+        try:
+            checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
+            aba = janela.aba_atual
+            checa_igual(aba.total_completo(), len(verdade),
+                        f"*** {len(verdade):,} linhas: o CR sozinho conta "
+                        f"como quebra ***".replace(",", "."))
+
+            QApplication.sendEvent(aba.editor, QKeyEvent(
+                QKeyEvent.Type.KeyPress, Qt.Key.Key_End,
+                Qt.KeyboardModifier.ControlModifier))
+            drenar_eventos()
+            checa_igual(aba.editor.linha_atual_no_documento(),
+                        len(verdade) - 1,
+                        "*** Ctrl+End chega a' ultima linha de verdade ***")
+
+            aba.ir_para_linha(20_000)
+            drenar_eventos()
+            checa_igual(aba.editor.textCursor().block().text(),
+                        verdade[20_000].decode(),
+                        "*** e a linha 20.001 do editor e' a 20.001 do "
+                        "arquivo: a numeracao nao se perde ***")
+        finally:
+            janela.close()
+            janela.deleteLater()
+
+
+def testar_salvar_preserva_o_fim_de_linha_de_cada_linha() -> None:
+    """DEFEITO MEDIDO: editar UM caractere e salvar trocava 833 CRLF por CR.
+
+    A fatia era regravada com o terminador DOMINANTE do arquivo, e tudo entre
+    o primeiro e o ultimo ponto diferente era reescrito. Agora cada linha
+    volta com o terminador que tinha; so' uma linha nova recebe o dominante.
+    """
+    secao("*** Salvar num arquivo misto muda so' o que foi editado ***")
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo, antes = _arquivo_misto(tmp, 12_000)
+
+        janela = JanelaPrincipal()
+        try:
+            checa(janela.abrir_arquivo(str(alvo)), "abre o arquivo")
+            aba = janela.aba_atual
+            aba.total_completo()
+            checa_igual(aba.perfil.fim_de_linha, "\r",
+                        "o dominante deste arquivo e' o CR")
+
+            # 1) Um caractere no comeco de uma linha.
+            aba.ir_para_linha(6_000)
+            drenar_eventos()
+            cursor = aba.editor.textCursor()
+            cursor.movePosition(cursor.MoveOperation.StartOfBlock)
+            cursor.insertText("Z")
+            aba.editor.setTextCursor(cursor)
+            aba.sincronizar()
+            aba.salvar()
+            depois = alvo.read_bytes()
+            checa_igual(len(depois) - len(antes), 1,
+                        "*** o arquivo cresceu exatamente 1 byte ***")
+            checa_igual(depois.count(b"\r\n"), antes.count(b"\r\n"),
+                        "*** e nenhum CRLF virou CR ***")
+            checa_igual(depois.replace(b"Z", b"", 1), antes,
+                        "*** tirando o Z, o arquivo e' identico ***")
+
+            # 2) Uma linha NOVA no meio: so' ela recebe o terminador dominante.
+            aba.ir_para_linha(3_000)
+            drenar_eventos()
+            cursor = aba.editor.textCursor()
+            cursor.movePosition(cursor.MoveOperation.EndOfBlock)
+            cursor.insertText("\nNOVA")
+            aba.editor.setTextCursor(cursor)
+            aba.sincronizar()
+            aba.salvar()
+            final = alvo.read_bytes()
+            checa_igual(final.count(b"\r\n"), antes.count(b"\r\n"),
+                        "*** a linha nova nao mexeu em nenhum CRLF ***")
+            checa("NOVA".encode() in final, "a linha nova esta' no arquivo")
+            sem_nova = final.replace(b"NOVA\r", b"", 1)
+            checa_igual(sem_nova, depois,
+                        "*** tirando a linha nova (com o CR dominante), o "
+                        "arquivo e' o de antes ***")
+        finally:
+            janela.close()
+            janela.deleteLater()
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -367,6 +489,8 @@ def main() -> int:
     testar_margem_e_posicao()
     testar_ctrl_end_vai_ao_fim_do_DOCUMENTO()
     testar_ir_para_linha_vai_ao_arquivo_inteiro()
+    testar_arquivo_com_cr_sozinho_no_editor()
+    testar_salvar_preserva_o_fim_de_linha_de_cada_linha()
     return resumir()
 
 

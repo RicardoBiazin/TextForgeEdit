@@ -256,12 +256,14 @@ class JanelaPrincipal(QMainWindow):
             for caminho in (caminho_a, caminho_b):
                 original = Original(caminho)
                 abertos.append(original)
+                perfil = codificacao.detectar(
+                    original.ler(0, codificacao.SONDAGEM))
+                original.quebra_em_cr = codificacao.cr_e_quebra(perfil.codec)
                 # O índice INTEIRO, e não só a partida: comparar precisa do
                 # total de linhas dos dois lados antes de começar.
                 original.indexar()
                 documentos.append(Documento(original))
-                perfis.append(codificacao.detectar(
-                    original.ler(0, codificacao.SONDAGEM)))
+                perfis.append(perfil)
 
             # 0 ou menos = sem teto. O alinhamento e' por ancoras de linha
             # unica, e num arquivo em que quase toda linha se repete o custo
