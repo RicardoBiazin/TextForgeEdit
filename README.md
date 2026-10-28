@@ -224,11 +224,33 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Localizar: marcar, contar e listar
+
+Na barra de busca (Ctrl+F):
+
+- **Marcar** destaca todas as ocorrências no texto, e acompanha o que se
+  digita. Num arquivo grande, marca a parte carregada (até 5.000 linhas, no
+  máximo 10.000 marcas), e a barra diz isso.
+- **Listar** percorre o arquivo **inteiro** e abre uma grade embaixo do editor
+  com linha, coluna e o trecho de cada ocorrência, mais a contagem:
+  "N ocorrência(s) em M linha(s)". Duplo clique (ou Enter) leva até ela,
+  mesmo fora da parte carregada.
+
+A varredura roda aos pedaços na própria interface, e não numa thread: assim
+ninguém lê a tabela de peças enquanto você edita. Medido num arquivo de 45 MB:
+18.330 ocorrências listadas em 0,4 s. A grade guarda no máximo 100.000
+ocorrências; acima disso para de crescer e avisa, mas a contagem continua sendo
+a do arquivo inteiro.
+
+A lista é um retrato do momento da busca. Editar depois pode deslocar linhas;
+Listar de novo refaz. Trocar de aba fecha a lista.
+
 ## CR sozinho é quebra de linha, e salvar preserva o fim de linha de cada linha
 
 **Quebra de linha** passou a ter uma regra só no programa inteiro: o `
 `, ou um
-`` que **não** venha seguido de `
+`
+` que **não** venha seguido de `
 `. Num CRLF a quebra é o `
 `; um CR sozinho
 (Mac antigo e muito export de sistema legado) também é quebra.

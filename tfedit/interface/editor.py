@@ -18,15 +18,22 @@ ficavam na tabela sem ninguem consulta-las.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import (QFont, QFontMetrics, QKeySequence, QPainter,
-                           QTextCursor)
-from PySide6.QtWidgets import QPlainTextEdit, QWidget
+                           QTextCharFormat, QTextCursor)
+from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
 
 from tfedit import tema as tema_mod
 from tfedit.janela import JanelaViva
 from tfedit.realce.pintor import Pintor
 
+
+
+#: Quantas ocorrencias o "Marcar" destaca, no maximo, na parte carregada.
+#: A fatia tem ate' 5.000 linhas; uma letra comum daria centenas de milhares
+#: de marcas, e o Qt repinta todas a cada quadro. Acima disto o destaque para,
+#: e a lista de resultados continua tendo a contagem do arquivo inteiro.
+TETO_DE_MARCAS = 10_000
 
 class Margem(QWidget):
     """A coluna de numeros. Mostra a linha do DOCUMENTO, e nao a da fatia."""
@@ -204,6 +211,63 @@ class EditorDeslizante(QPlainTextEdit):
             self._deslizando = False
         self._ajustar_margem()
         self._semear_realce()
+        # A fatia nova chega sem marcas: as do trecho anterior apontavam para
+        # posicoes de outro texto.
+        self._aplicar_marcas()
+
+    # ==================================================================
+    # Marcar as ocorrencias
+    # ==================================================================
+
+    def marcar(self, padrao) -> int:
+        """Destaca toda ocorrencia de `padrao` na parte carregada. None limpa.
+
+        Devolve quantas foram marcadas. E' a parte VISIVEL que se marca --
+        a fatia de ate' 5.000 linhas que o editor tem. A contagem do arquivo
+        inteiro e' da lista de resultados, que percorre o documento.
+        """
+        self._padrao_marcado = padrao
+        return self._aplicar_marcas()
+
+    def _aplicar_marcas(self) -> int:
+        padrao = getattr(self, "_padrao_marcado", None)
+        if padrao is None:
+            self.setExtraSelections([])
+            return 0
+        formato = QTextCharFormat()
+        formato.setBackground(self.cor_da_margem("editor.ocorrencia"))
+        texto = self.toPlainText()
+        # O Qt conta posicoes em unidades UTF-16, e o Python em caracteres.
+        # So' diferem com caracteres fora do plano basico (emoji, por
+        # exemplo); nesse caso a posicao e' convertida andando junto.
+        largo = any(ord(c) > 0xFFFF for c in texto)
+        ultimo_py = ultimo_qt = 0
+
+        def para_qt(i: int) -> int:
+            nonlocal ultimo_py, ultimo_qt
+            if not largo:
+                return i
+            ultimo_qt += len(texto[ultimo_py:i].encode("utf-16-le")) // 2
+            ultimo_py = i
+            return ultimo_qt
+
+        documento = self.document()
+        selecoes = []
+        for achado in padrao.finditer(texto):
+            if achado.start() == achado.end():
+                continue
+            cursor = QTextCursor(documento)
+            cursor.setPosition(para_qt(achado.start()))
+            cursor.setPosition(para_qt(achado.end()),
+                               QTextCursor.MoveMode.KeepAnchor)
+            selecao = QTextEdit.ExtraSelection()
+            selecao.cursor = cursor
+            selecao.format = formato
+            selecoes.append(selecao)
+            if len(selecoes) >= TETO_DE_MARCAS:
+                break
+        self.setExtraSelections(selecoes)
+        return len(selecoes)
 
     @property
     def sujo(self) -> bool:
@@ -380,6 +444,20 @@ class EditorDeslizante(QPlainTextEdit):
         if not self._deslizando and not self._repintando:
             self._sujo = True
             self.sujou.emit()
+            # Digitar muda as posicoes: as marcas sao refeitas logo depois de a
+            # pessoa parar, e nao a cada tecla.
+            if getattr(self, "_padrao_marcado", None) is not None:
+                self._relogio_marcas().start()
+
+    def _relogio_marcas(self) -> QTimer:
+        relogio = getattr(self, "_relogio_de_marcas", None)
+        if relogio is None:
+            relogio = QTimer(self)
+            relogio.setSingleShot(True)
+            relogio.setInterval(250)
+            relogio.timeout.connect(self._aplicar_marcas)
+            self._relogio_de_marcas = relogio
+        return relogio
 
     # ==================================================================
     # A margem de numeros

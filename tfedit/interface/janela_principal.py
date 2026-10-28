@@ -154,12 +154,34 @@ class JanelaPrincipal(QMainWindow):
         self.barra_busca.substituir_atual.connect(self._substituir_atual)
         self.barra_busca.substituir_todas.connect(self._substituir_todas)
         self.barra_busca.fechada.connect(self._focar_editor)
+        self.barra_busca.fechada.connect(
+            lambda: self._marcar_ocorrencias(None))
+        self.barra_busca.marcar.connect(self._marcar_ocorrencias)
+        self.barra_busca.listar.connect(self._listar_ocorrencias)
+
+        from PySide6.QtWidgets import QSplitter
+
+        from tfedit.interface.resultados_busca import PainelDeResultados
+
+        self.resultados = PainelDeResultados(self)
+        self.resultados.hide()
+        self.resultados.escolhido.connect(self._ir_para_resultado)
+        self.resultados.terminou.connect(self._ao_terminar_listagem)
+
+        # O editor em cima e a lista embaixo, num divisor: a altura da lista e'
+        # de quem usa, e escondida ela nao ocupa nada.
+        self.divisor = QSplitter(Qt.Orientation.Vertical, self)
+        self.divisor.addWidget(self.abas)
+        self.divisor.addWidget(self.resultados)
+        self.divisor.setStretchFactor(0, 3)
+        self.divisor.setStretchFactor(1, 1)
+        self.divisor.setChildrenCollapsible(False)
 
         central = QWidget(self)
         pilha = QVBoxLayout(central)
         pilha.setContentsMargins(0, 0, 0, 0)
         pilha.setSpacing(0)
-        pilha.addWidget(self.abas, 1)
+        pilha.addWidget(self.divisor, 1)
         pilha.addWidget(self.barra_busca)
         self.setCentralWidget(central)
 
@@ -1391,9 +1413,18 @@ class JanelaPrincipal(QMainWindow):
         return True
 
     def _ao_trocar_de_aba(self, _indice: int) -> None:
+        # A lista de resultados e' de OUTRO documento: as linhas dela levariam
+        # a lugares errados nesta aba.
+        resultados = getattr(self, "resultados", None)
+        if resultados is not None:
+            resultados.fechar()
         aba = self.aba_atual
         if aba is None:
             return
+        # O destaque segue a barra: com "Marcar" ligado, a aba nova tambem
+        # aparece marcada.
+        if self.barra_busca.isVisible():
+            self.barra_busca._mudou_criterio()
         if aba.e_planilha:
             # Codificacao e linguagem nao significam nada num pacote ZIP.
             self.rotulo_codec.clear()
@@ -1643,6 +1674,57 @@ class JanelaPrincipal(QMainWindow):
         aba = self.aba_atual
         if aba is not None:
             aba.focar_view_atual()
+
+    def _marcar_ocorrencias(self, criterio) -> None:
+        """Destaca as ocorrencias no texto carregado. None apaga as marcas."""
+        aba = self.aba_atual
+        if aba is None or aba.e_planilha or aba.editor is None:
+            return
+        padrao = criterio.compilar() if criterio is not None else None
+        quantas = aba.editor.marcar(padrao)
+        if padrao is None:
+            return
+        from tfedit.interface.editor import TETO_DE_MARCAS
+
+        recado = f"{quantas:,} marcada(s)".replace(",", ".")
+        recorte = aba.janela.recorte
+        if quantas >= TETO_DE_MARCAS:
+            recado += " (limite do destaque)"
+        if (recorte is not None
+                and recorte.quantas_linhas < aba.documento.total_de_linhas):
+            # Num arquivo grande so' a parte carregada e' marcada. Dizer isso
+            # evita ler o numero como a contagem do arquivo.
+            recado += " na parte carregada — Listar conta o arquivo inteiro"
+        self.barra_busca.dizer(recado)
+
+    def _listar_ocorrencias(self, criterio) -> None:
+        """Procura no documento INTEIRO e mostra a grade com a contagem."""
+        aba = self.aba_atual
+        if aba is None or aba.e_planilha or aba.documento is None:
+            self.barra_busca.dizer("Listar vale para arquivos de texto",
+                                   erro=True)
+            return
+        # O que esta' digitado na fatia vai para o documento antes: senao a
+        # lista nao veria a ultima edicao.
+        aba.sincronizar()
+        if aba.indexando_agora:
+            aba.total_completo()
+        if not self.resultados.comecar(aba.documento, criterio,
+                                       aba.perfil.codec):
+            self.barra_busca.dizer("expressão inválida", erro=True)
+
+    def _ao_terminar_listagem(self, ocorrencias: int, linhas: int,
+                              cortou: bool) -> None:
+        self.barra_busca.dizer(
+            f"{ocorrencias:,} ocorrência(s) em {linhas:,} linha(s)"
+            .replace(",", "."), erro=not ocorrencias)
+
+    def _ir_para_resultado(self, linha: int, inicio: int, fim: int) -> None:
+        aba = self.aba_atual
+        if aba is None:
+            return
+        self._ir_para_achado(aba, busca.Achado(linha, inicio, fim, ""))
+        self._mostrar_posicao(aba.linha_atual(), inicio)
 
     def _procurar(self, criterio: busca.Criterio, para_tras: bool) -> None:
         aba = self.aba_atual

@@ -19,8 +19,8 @@ from __future__ import annotations
 import pathlib
 import sys
 
-from ajudantes import (checa, checa_igual, pasta_temporaria, preparar_qt,
-                       pular, resumir, secao)
+from ajudantes import (checa, checa_igual, drenar_eventos, pasta_temporaria,
+                       preparar_qt, pular, resumir, secao)
 
 TEM_QT = preparar_qt()
 
@@ -940,6 +940,165 @@ def testar_o_app_define_o_icone_e_a_identidade() -> None:
           "*** e a identidade vem ANTES da QApplication: depois de a janela "
           "existir, o Windows ja' decidiu sob que icone agrupa-la ***")
 
+
+def _arquivo_com_alvos(pasta, linhas: int = 30_000):
+    """ALVO em toda linha multipla de 7, e duas vezes nas multiplas de 70."""
+    partes = []
+    for i in range(linhas):
+        texto = f"registro {i:06} "
+        if i % 70 == 0:
+            texto += "ALVO e ALVO"
+        elif i % 7 == 0:
+            texto += "tem ALVO aqui"
+        partes.append(texto.encode())
+    alvo = pasta / "alvos.txt"
+    alvo.write_bytes(b"\r\n".join(partes) + b"\r\n")
+    ocorrencias = sum(2 if i % 70 == 0 else 1
+                      for i in range(linhas) if i % 7 == 0)
+    com_alvo = sum(1 for i in range(linhas) if i % 7 == 0)
+    return alvo, ocorrencias, com_alvo
+
+
+def testar_listar_ocorrencias_com_contagem_e_grade() -> None:
+    """PEDIDO: ao localizar, mostrar quantas vezes aparece e listar as linhas.
+
+    "Listar" percorre o arquivo INTEIRO, e nao so' a parte carregada. A
+    contagem e' do arquivo; a grade leva ate' cada ocorrencia.
+    """
+    secao("*** Listar: contagem do arquivo inteiro e grade das linhas ***")
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo, ocorrencias, com_alvo = _arquivo_com_alvos(tmp)
+        janela = JanelaPrincipal()
+        try:
+            checa(janela.abrir_arquivo(str(alvo)), "abre")
+            aba = janela.aba_atual
+            janela.barra_busca.show()
+            janela.barra_busca.campo.setText("ALVO")
+            janela.barra_busca._listar()
+            janela.resultados.executar_tudo()
+
+            modelo = janela.resultados.modelo
+            checa(janela.resultados.isVisibleTo(janela),
+                  "*** a grade aparece embaixo ***")
+            checa_igual(modelo.rowCount(), ocorrencias,
+                        f"*** uma linha na grade por ocorrencia: "
+                        f"{ocorrencias} ***")
+            cabecalho = janela.resultados.cabecalho.text()
+            esperado = (f"{ocorrencias:,} ocorrência(s) em {com_alvo:,} "
+                        f"linha(s)").replace(",", ".")
+            checa(esperado in cabecalho,
+                  f"*** o cabecalho diz quantas e em quantas linhas: "
+                  f"{cabecalho!r} ***")
+            checa(esperado in janela.barra_busca.rotulo.text(),
+                  "e a barra de busca tambem")
+
+            # Uma ocorrencia LA' NO FIM, fora da parte carregada.
+            indice = modelo.rowCount() - 1
+            linha, inicio, fim, _ = modelo.linhas[indice]
+            janela.resultados._ao_escolher(modelo.index(indice, 0))
+            drenar_eventos()
+            checa_igual(aba.linha_atual(), linha,
+                        "*** escolher na grade leva ate' a linha, mesmo "
+                        "fora da parte carregada ***")
+            checa_igual(aba.editor.textCursor().selectedText(), "ALVO",
+                        "e seleciona a ocorrencia")
+        finally:
+            encerrar(janela)
+
+
+def testar_lista_tem_teto_mas_a_contagem_nao() -> None:
+    """Acima do teto a GRADE para de crescer; o NUMERO continua certo."""
+    secao("*** A lista tem teto; a contagem e' do arquivo inteiro ***")
+
+    from tfedit.interface import resultados_busca
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo, ocorrencias, _ = _arquivo_com_alvos(tmp, 3_000)
+        antigo = resultados_busca.TETO_DA_LISTA
+        resultados_busca.TETO_DA_LISTA = 10
+        janela = JanelaPrincipal()
+        try:
+            janela.abrir_arquivo(str(alvo))
+            janela.barra_busca.campo.setText("ALVO")
+            janela.barra_busca._listar()
+            janela.resultados.executar_tudo()
+            checa_igual(janela.resultados.modelo.rowCount(), 10,
+                        "*** a grade para no teto ***")
+            cabecalho = janela.resultados.cabecalho.text()
+            checa(f"{ocorrencias:,}".replace(",", ".") in cabecalho,
+                  f"*** e a contagem continua sendo a do arquivo: "
+                  f"{cabecalho!r} ***")
+            checa("primeiras" in cabecalho, "e o cabecalho avisa o corte")
+        finally:
+            resultados_busca.TETO_DA_LISTA = antigo
+            encerrar(janela)
+
+
+def testar_marcar_destaca_as_ocorrencias() -> None:
+    """PEDIDO: marcar onde a palavra aparece, no proprio texto."""
+    secao("*** Marcar destaca as ocorrencias, e acompanha a fatia ***")
+
+    import re
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    with pasta_temporaria() as tmp:
+        alvo, _, _ = _arquivo_com_alvos(tmp)
+        janela = JanelaPrincipal()
+        try:
+            janela.abrir_arquivo(str(alvo))
+            aba = janela.aba_atual
+            barra = janela.barra_busca
+            barra.show()
+            barra.campo.setText("ALVO")
+            barra.caixa_marcar.setChecked(True)
+
+            na_fatia = len(re.findall("ALVO", aba.editor.toPlainText(),
+                                      re.IGNORECASE))
+            checa_igual(len(aba.editor.extraSelections()), na_fatia,
+                        f"*** {na_fatia} marcas: cada ocorrencia da parte "
+                        f"carregada ***")
+            checa("parte carregada" in barra.rotulo.text(),
+                  f"*** e a barra diz que e' a parte carregada: "
+                  f"{barra.rotulo.text()!r} ***")
+
+            # Ir para longe recarrega a fatia: as marcas vem junto.
+            aba.ir_para_linha(25_000)
+            drenar_eventos()
+            na_fatia = len(re.findall("ALVO", aba.editor.toPlainText(),
+                                      re.IGNORECASE))
+            checa_igual(len(aba.editor.extraSelections()), na_fatia,
+                        "*** depois de deslizar, a fatia nova vem marcada ***")
+
+            barra.caixa_marcar.setChecked(False)
+            checa_igual(len(aba.editor.extraSelections()), 0,
+                        "*** desmarcar apaga o destaque ***")
+
+            barra.caixa_marcar.setChecked(True)
+            barra._fechar()
+            checa_igual(len(aba.editor.extraSelections()), 0,
+                        "e fechar a barra de busca tambem")
+        finally:
+            encerrar(janela)
+
+
+def testar_trecho_da_grade() -> None:
+    secao("*** O texto da grade mostra a ocorrencia, cortando o excesso ***")
+
+    from tfedit.interface.resultados_busca import trecho
+
+    checa_igual(trecho("curto ALVO", 6, 10), "curto ALVO",
+                "linha curta sai inteira")
+    longa = "x" * 500 + "ALVO" + "y" * 500
+    saida = trecho(longa, 500, 504)
+    checa("ALVO" in saida, "*** a linha longa e' cortada EM VOLTA do achado ***")
+    checa(saida.startswith("…") and saida.endswith("…"),
+          "e as reticencias mostram onde cortou")
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -963,6 +1122,10 @@ def main() -> int:
     testar_log()
     testar_a_janela_tem_icone()
     testar_o_app_define_o_icone_e_a_identidade()
+    testar_listar_ocorrencias_com_contagem_e_grade()
+    testar_lista_tem_teto_mas_a_contagem_nao()
+    testar_marcar_destaca_as_ocorrencias()
+    testar_trecho_da_grade()
     return resumir()
 
 

@@ -25,6 +25,10 @@ class BarraDeBusca(QWidget):
     substituir_atual = Signal(object, str)  # (Criterio, substituto)
     substituir_todas = Signal(object, str)
     fechada = Signal()
+    #: Criterio a destacar no texto, ou None para apagar as marcas.
+    marcar = Signal(object)
+    #: Criterio a listar na grade de resultados, com a contagem.
+    listar = Signal(object)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -47,6 +51,17 @@ class BarraDeBusca(QWidget):
         self.caixa_palavra.setToolTip("Somente palavras inteiras")
         self.caixa_regex = QCheckBox(".*", self)
         self.caixa_regex.setToolTip("Expressão regular")
+        self.caixa_marcar = QCheckBox("Marcar", self)
+        self.caixa_marcar.setToolTip(
+            "Destacar todas as ocorrências no texto carregado")
+
+        # Marcar acompanha o que se digita e as opcoes: com a caixa ligada,
+        # trocar o texto procurado troca o destaque na hora.
+        self.caixa_marcar.toggled.connect(self._mudou_criterio)
+        self.campo.textChanged.connect(self._mudou_criterio)
+        for caixa in (self.caixa_maiusculas, self.caixa_palavra,
+                      self.caixa_regex):
+            caixa.toggled.connect(self._mudou_criterio)
 
         self.rotulo = QLabel("", self)
 
@@ -62,9 +77,13 @@ class BarraDeBusca(QWidget):
         grade.addWidget(self.caixa_maiusculas, 0, 4)
         grade.addWidget(self.caixa_palavra, 0, 5)
         grade.addWidget(self.caixa_regex, 0, 6)
-        grade.addWidget(self.rotulo, 0, 7)
+        grade.addWidget(self.caixa_marcar, 0, 7)
+        grade.addWidget(self._botao(
+            "Listar", "Lista todas as ocorrências do arquivo, com a contagem",
+            self._listar), 0, 8)
+        grade.addWidget(self.rotulo, 0, 9)
         grade.addWidget(self._botao("×", "Fechar (Esc)", self._fechar),
-                        0, 8)
+                        0, 10)
 
         grade.addWidget(QLabel("Substituir:", self), 1, 0)
         grade.addWidget(self.campo_troca, 1, 1)
@@ -134,6 +153,21 @@ class BarraDeBusca(QWidget):
         criterio = self.criterio()
         if criterio.texto and criterio.compilar() is not None:
             self.substituir_todas.emit(criterio, self.campo_troca.text())
+
+    def _mudou_criterio(self, *_args) -> None:
+        if self.caixa_marcar.isChecked() and self.campo.text():
+            self.marcar.emit(self.criterio())
+        else:
+            self.marcar.emit(None)
+
+    def _listar(self) -> None:
+        if not self.campo.text():
+            self.dizer("digite o que procurar", erro=True)
+            return
+        if self.criterio().compilar() is None:
+            self.dizer("expressão inválida", erro=True)
+            return
+        self.listar.emit(self.criterio())
 
     def _fechar(self) -> None:
         self.hide()
