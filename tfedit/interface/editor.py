@@ -21,8 +21,10 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import (QFont, QFontMetrics, QKeySequence, QPainter,
                            QTextCharFormat, QTextCursor)
-from PySide6.QtWidgets import QPlainTextEdit, QTextEdit, QWidget
+from PySide6.QtWidgets import (QApplication, QPlainTextEdit, QTextEdit,
+                               QWidget)
 
+from tfedit import codificacao
 from tfedit import tema as tema_mod
 from tfedit.janela import JanelaViva
 from tfedit.realce.pintor import Pintor
@@ -60,6 +62,9 @@ class EditorDeslizante(QPlainTextEdit):
     #: Desfazer ou refazer mexeu na tabela de pecas -- o titulo e a barra de
     #: status precisam ser refeitos, e o texto na tela ja' e' outro.
     conteudo_voltou = Signal()
+    #: True quando o DOCUMENTO INTEIRO esta' selecionado (Ctrl+A), False
+    #: quando a selecao volta a ser so' o que se ve'.
+    tudo_selecionado = Signal(bool)
 
     def __init__(self, janela: JanelaViva, parent: QWidget | None = None,
                  *, cfg: dict | None = None, tema=None, provedor=None) -> None:
@@ -209,6 +214,10 @@ class EditorDeslizante(QPlainTextEdit):
                 self.centerCursor()
         finally:
             self._deslizando = False
+        if self.tudo_marcado:
+            # Com o documento inteiro selecionado, a fatia nova tambem aparece
+            # selecionada -- senao rolar faria parecer que a selecao sumiu.
+            self._selecionar_fatia()
         self._ajustar_margem()
         self._semear_realce()
         # A fatia nova chega sem marcas: as do trecho anterior apontavam para
@@ -347,6 +356,13 @@ class EditorDeslizante(QPlainTextEdit):
         Todos os testes chamavam `editor.undo()` e passavam. Testar o METODO nao
         e' testar a TECLA: e' este `keyPressEvent` que o usuario aciona.
         """
+        if evento.matches(QKeySequence.StandardKey.SelectAll):
+            self.selecionar_tudo()
+            evento.accept()
+            return
+        if self.tudo_marcado and self._tecla_com_tudo(evento):
+            evento.accept()
+            return
         if evento.matches(QKeySequence.StandardKey.Undo):
             self.undo()
             evento.accept()
@@ -386,6 +402,130 @@ class EditorDeslizante(QPlainTextEdit):
             return
 
         super().keyPressEvent(evento)
+
+    # ==================================================================
+    # Selecionar o documento inteiro
+    # ==================================================================
+
+    @property
+    def tudo_marcado(self) -> bool:
+        return getattr(self, "_tudo", False)
+
+    def selecionar_tudo(self) -> None:
+        """Ctrl+A seleciona o DOCUMENTO, e nao so' a fatia carregada.
+
+        DEFEITO RELATADO: Ctrl+A selecionava "parcial". O widget so' tem a
+        fatia (ate' 5.000 linhas), e o `selectAll` dele so' conhece ela. Num
+        arquivo de 143 mil linhas, copiar depois do Ctrl+A levava um pedaco.
+
+        A selecao do documento inteiro nao cabe no widget, entao ela e' um
+        ESTADO do editor: a fatia aparece selecionada, e copiar, recortar,
+        colar, digitar e apagar passam a valer para o arquivo todo. Qualquer
+        movimento do cursor ou clique volta a selecao normal.
+        """
+        self.sincronizar()
+        self._tudo = True
+        self._selecionar_fatia()
+        self.tudo_selecionado.emit(True)
+
+    def _selecionar_fatia(self) -> None:
+        # `_deslizando`: o `selectAll` leva o cursor ao fim da fatia, e isso
+        # dispararia um deslize -- que recarregaria, selecionaria de novo, e
+        # deslizaria de novo.
+        antes = self._deslizando
+        self._deslizando = True
+        try:
+            QPlainTextEdit.selectAll(self)
+        finally:
+            self._deslizando = antes
+
+    def _soltar_tudo(self) -> None:
+        if self.tudo_marcado:
+            self._tudo = False
+            self.tudo_selecionado.emit(False)
+
+    def texto_do_documento(self) -> str:
+        """O documento inteiro, decodificado, com quebras `\n`."""
+        self.sincronizar()
+        documento = self.janela.documento
+        bruto = documento.ler(0, documento.tamanho)
+        return codificacao.para_lf(self.janela._decodificar(bruto))
+
+    def substituir_tudo(self, texto: str) -> None:
+        """Troca o documento INTEIRO por `texto`. Um Ctrl+Z desfaz.
+
+        Vai direto a' tabela de pecas: o widget so' tem a fatia, e regravar a
+        fatia nao apagaria o resto do arquivo.
+        """
+        if self.isReadOnly():
+            return
+        documento = self.janela.documento
+        perfil = self.janela.perfil
+        novo = codificacao.de_lf(texto, perfil.fim_de_linha).encode(
+            perfil.codec, errors="replace")
+        with documento.agrupar():
+            documento.substituir(0, documento.tamanho, novo)
+        self._soltar_tudo()
+        self.recarregar(0)
+        self.ir_para_fim_do_documento()
+        self.conteudo_voltou.emit()
+
+    def copy(self) -> None:                               # noqa: D102 - Qt
+        if self.tudo_marcado:
+            QApplication.clipboard().setText(self.texto_do_documento())
+            return
+        super().copy()
+
+    def cut(self) -> None:                                # noqa: D102 - Qt
+        if self.tudo_marcado:
+            self.copy()
+            self.substituir_tudo("")
+            return
+        super().cut()
+
+    def paste(self) -> None:                              # noqa: D102 - Qt
+        if self.tudo_marcado:
+            self.substituir_tudo(QApplication.clipboard().text())
+            return
+        super().paste()
+
+    def mousePressEvent(self, evento) -> None:            # noqa: N802 - Qt
+        # Um clique e' um "agora quero outra coisa": a selecao do documento
+        # inteiro acaba, e o clique faz o que faria normalmente.
+        self._soltar_tudo()
+        super().mousePressEvent(evento)
+
+    def _tecla_com_tudo(self, evento) -> bool:
+        """O que uma tecla faz com o documento inteiro selecionado.
+
+        True quando a tecla foi tratada aqui. Teclas de movimento soltam a
+        selecao do documento e seguem o caminho normal.
+        """
+        if evento.matches(QKeySequence.StandardKey.Copy):
+            self.copy()
+            return True
+        if evento.matches(QKeySequence.StandardKey.Cut):
+            self.cut()
+            return True
+        if evento.matches(QKeySequence.StandardKey.Paste):
+            self.paste()
+            return True
+        if evento.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
+            self.substituir_tudo("")
+            return True
+        if evento.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+            self.substituir_tudo("\n")
+            return True
+        texto = evento.text()
+        controle = evento.modifiers() & (Qt.KeyboardModifier.ControlModifier
+                                         | Qt.KeyboardModifier.AltModifier)
+        if texto and texto.isprintable() and not controle:
+            self.substituir_tudo(texto)
+            return True
+        if evento.key() not in (Qt.Key.Key_Shift, Qt.Key.Key_Control,
+                                Qt.Key.Key_Alt, Qt.Key.Key_Meta):
+            self._soltar_tudo()
+        return False
 
     def ir_para_fim_do_documento(self) -> None:
         """A ultima linha do documento, deslizando a fatia se preciso.
@@ -430,6 +570,8 @@ class EditorDeslizante(QPlainTextEdit):
         self.margem.update()
         if self._deslizando:
             return
+        if self.tudo_marcado and not self.textCursor().hasSelection():
+            self._soltar_tudo()
         linha = self.linha_atual_no_documento()
         self.posicao_mudou.emit(linha, self.textCursor().columnNumber())
         # Mover o cursor fecha o grupo de digitacao na tabela de pecas: teclas

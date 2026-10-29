@@ -224,6 +224,23 @@ símbolo não diz mais nada.
 Uma chave desconhecida na configuração é **ignorada em silêncio**: um arquivo
 gravado por uma versão mais nova não pode impedir esta de abrir.
 
+## Ctrl+A seleciona o arquivo inteiro
+
+`Editar → Selecionar tudo` (Ctrl+A) seleciona o **documento**, e não só a parte
+carregada. Antes, o Ctrl+A do widget só conhecia a fatia de até 5.000 linhas, e
+copiar depois dele levava um pedaço do arquivo.
+
+Com o arquivo inteiro selecionado:
+
+- **Ctrl+C** copia o arquivo todo;
+- **Ctrl+X** recorta o arquivo todo;
+- **colar, digitar ou Delete** substituem o arquivo todo, e **um** Ctrl+Z desfaz;
+- qualquer seta ou clique volta à seleção normal.
+
+Na tela, só a parte carregada aparece selecionada; o rodapé diz que é o arquivo
+inteiro, com o número de linhas e o tamanho. Medido num arquivo de 45 MB:
+copiou as 143.541 linhas.
+
 ## Localizar: marcar, contar e listar
 
 Na barra de busca (Ctrl+F):

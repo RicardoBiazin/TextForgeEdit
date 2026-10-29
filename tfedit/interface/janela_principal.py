@@ -1163,6 +1163,9 @@ class JanelaPrincipal(QMainWindow):
              lambda: self._no_editor("copy"), editar)
         acao("C&olar", QKeySequence.StandardKey.Paste,
              lambda: self._no_editor("paste"), editar)
+        editar.addSeparator()
+        acao("Selecionar t&udo", QKeySequence.StandardKey.SelectAll,
+             lambda: self._no_editor("selecionar_tudo"), editar)
 
         localizar = self.menuBar().addMenu("&Localizar")
         acao("&Localizar...", QKeySequence.StandardKey.Find,
@@ -1240,6 +1243,9 @@ class JanelaPrincipal(QMainWindow):
         aba.titulo_mudou.connect(self._atualizar_titulos)
         aba.indexando.connect(self._ao_indexar)
         aba.indexou.connect(self._ao_terminar_indice)
+        if getattr(aba, "editor", None) is not None:
+            aba.editor.tudo_selecionado.connect(
+                lambda ligado, a=aba: self._avisar_tudo_selecionado(a, ligado))
         # A planilha tambem recusa com motivo (copia grande demais). Sem esta
         # ligacao o `recusou` existia e ninguem o ouvia: a recusa era muda.
         if aba.e_planilha and aba.view("planilha") is not None:
@@ -1674,6 +1680,23 @@ class JanelaPrincipal(QMainWindow):
         aba = self.aba_atual
         if aba is not None:
             aba.focar_view_atual()
+
+    def _avisar_tudo_selecionado(self, aba, ligado: bool) -> None:
+        """Diz no rodape que o ARQUIVO inteiro esta' selecionado.
+
+        Na tela so' a parte carregada aparece selecionada. Sem o aviso, a
+        pessoa nao saberia que o Ctrl+C vai levar o arquivo todo.
+        """
+        if not ligado:
+            self.barra.clearMessage()
+            return
+        total = aba.total_completo()
+        mb = aba.documento.tamanho / (1024 * 1024)
+        linhas = f"{total:,}".replace(",", ".")
+        tamanho = f"{mb:.1f}".replace(".", ",")
+        self.barra.showMessage(
+            f"Arquivo inteiro selecionado: {linhas} linhas, {tamanho} MB. "
+            f"Ctrl+C copia tudo; digitar, colar ou Delete substitui tudo.")
 
     def _marcar_ocorrencias(self, criterio) -> None:
         """Destaca as ocorrencias no texto carregado. None apaga as marcas."""

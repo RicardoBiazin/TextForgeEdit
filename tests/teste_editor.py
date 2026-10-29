@@ -481,6 +481,77 @@ def testar_salvar_preserva_o_fim_de_linha_de_cada_linha() -> None:
             janela.close()
             janela.deleteLater()
 
+
+def testar_ctrl_a_seleciona_o_arquivo_inteiro() -> None:
+    """DEFEITO RELATADO: Ctrl+A selecionava "parcial".
+
+    O widget so' tem a fatia carregada, e o `selectAll` dele so' conhece ela.
+    Agora Ctrl+A seleciona o DOCUMENTO: copiar leva o arquivo inteiro, e
+    digitar, colar ou apagar substituem o arquivo inteiro -- com um Ctrl+Z.
+    """
+    secao("*** Ctrl+A seleciona o arquivo inteiro, e nao so' a fatia ***")
+
+    from PySide6.QtCore import Qt
+    from PySide6.QtGui import QGuiApplication, QKeyEvent
+    from PySide6.QtWidgets import QApplication
+
+    from tfedit.interface.janela_principal import JanelaPrincipal
+
+    def tecla(alvo, chave, mods=Qt.KeyboardModifier.ControlModifier,
+              texto=""):
+        QApplication.sendEvent(alvo, QKeyEvent(
+            QKeyEvent.Type.KeyPress, chave, mods, texto))
+        drenar_eventos()
+
+    with pasta_temporaria() as tmp:
+        LINHAS = 30_000
+        alvo = gerar(tmp, "todo.txt", LINHAS)
+        antes = alvo.read_bytes()
+
+        janela = JanelaPrincipal()
+        try:
+            checa(janela.abrir_arquivo(str(alvo)), "abre")
+            aba = janela.aba_atual
+            aba.total_completo()
+            drenar_eventos(6)
+            editor = aba.editor
+
+            tecla(editor, Qt.Key.Key_A)
+            checa(editor.tudo_marcado, "*** Ctrl+A marca o documento inteiro ***")
+            checa("Arquivo inteiro selecionado" in janela.barra.currentMessage(),
+                  f"e o rodape avisa: {janela.barra.currentMessage()!r}")
+
+            tecla(editor, Qt.Key.Key_C)
+            copiado = QGuiApplication.clipboard().text()
+            esperado = antes.decode("utf-8").replace("\r\n", "\n")
+            checa_igual(copiado.count("\n") + 1, LINHAS + 1,
+                        f"*** o Ctrl+C levou as {LINHAS + 1} linhas, e nao so' "
+                        f"a fatia de 5.000 ***")
+            checa(copiado == esperado,
+                  "*** e o texto copiado e' o arquivo inteiro, igual ***")
+
+            # Digitar substitui o arquivo inteiro.
+            tecla(editor, Qt.Key.Key_X, Qt.KeyboardModifier.NoModifier, "x")
+            checa(not editor.tudo_marcado, "depois de digitar, a selecao acaba")
+            checa_igual(aba.documento.ler(0, aba.documento.tamanho), b"x",
+                        "*** digitar trocou o arquivo inteiro pela letra ***")
+
+            # Um Ctrl+Z traz tudo de volta.
+            tecla(editor, Qt.Key.Key_Z)
+            checa(aba.documento.ler(0, aba.documento.tamanho) == antes,
+                  "*** e UM Ctrl+Z devolve o arquivo inteiro, byte a byte ***")
+
+            # Mover o cursor solta a selecao do documento.
+            tecla(editor, Qt.Key.Key_A)
+            tecla(editor, Qt.Key.Key_Down, Qt.KeyboardModifier.NoModifier)
+            checa(not editor.tudo_marcado,
+                  "*** uma seta solta a selecao do arquivo inteiro ***")
+            checa(aba.documento.ler(0, aba.documento.tamanho) == antes,
+                  "e o arquivo nao mudou")
+        finally:
+            janela.close()
+            janela.deleteLater()
+
 def main() -> int:
     if not TEM_QT:
         return pular("PySide6 nao esta' instalado")
@@ -491,6 +562,7 @@ def main() -> int:
     testar_ir_para_linha_vai_ao_arquivo_inteiro()
     testar_arquivo_com_cr_sozinho_no_editor()
     testar_salvar_preserva_o_fim_de_linha_de_cada_linha()
+    testar_ctrl_a_seleciona_o_arquivo_inteiro()
     return resumir()
 
 
