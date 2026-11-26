@@ -96,7 +96,8 @@ class ModeloPlanilha(QAbstractTableModel):
         if orientacao == Qt.Orientation.Horizontal:
             from tfedit.planilha.valores import letra_de_coluna
 
-            return letra_de_coluna(secao + 1)
+            # Letra do Excel e numero da coluna: "A · 1".
+            return f"{letra_de_coluna(secao + 1)} · {secao + 1}"
         return str(secao + 1)
 
     def setData(self, indice, valor,                      # noqa: N802 - Qt

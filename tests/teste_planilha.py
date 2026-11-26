@@ -115,7 +115,8 @@ def testar_grade_le_os_valores() -> None:
             checa_igual(
                 [modelo.headerData(c, Qt.Orientation.Horizontal)
                  for c in range(3)],
-                ["A", "B", "C"], "as colunas sao A, B, C como no Excel")
+                ["A · 1", "B · 2", "C · 3"],
+                "as colunas sao A, B, C como no Excel, com o numero")
             checa(modelo.rowCount() > 20,
                   f"e sobram linhas em branco para digitar "
                   f"({modelo.rowCount()})")
