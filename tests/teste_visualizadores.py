@@ -393,8 +393,8 @@ def testar_grade_abre_e_le() -> None:
             checa_igual(grade.modelo.columnCount(), 3, "tres colunas")
             cabecalho = [grade.modelo.headerData(c, Qt.Orientation.Horizontal)
                          for c in range(3)]
-            checa_igual(cabecalho, ["produto", "preco", "desconto"],
-                        "o cabecalho vem do arquivo")
+            checa_igual(cabecalho, ["1 · produto", "2 · preco", "3 · desconto"],
+                        "o cabecalho vem do arquivo, com a coluna numerada")
             checa_igual(grade.modelo.data(grade.modelo.index(0, 1)), "0,50",
                         "e a celula tras o valor")
         finally:

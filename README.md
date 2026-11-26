@@ -136,7 +136,8 @@ quebra de linha; descobrir isso exigiria varrer do byte 0. Então aqui uma linha
 é um registro — e as linhas com aspas sem fechar aparecem marcadas e **não são
 editáveis**, com a explicação na dica. Não se corrompe o que não se consegue
 analisar. O cabeçalho também não ordena: um clique acionaria a leitura do
-arquivo inteiro.
+arquivo inteiro. Cada coluna aparece numerada no título (`1 · produto`,
+`2 · preco`), para achar a coluna N num arquivo largo.
 
 ## Planilhas .xlsx
 

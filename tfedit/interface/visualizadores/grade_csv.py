@@ -203,7 +203,8 @@ class ModeloCsv(QAbstractTableModel):
             if self.dialeto.tem_cabecalho:
                 cabecalho = self._campos(0)
                 if secao < len(cabecalho) and cabecalho[secao].strip():
-                    return cabecalho[secao]
+                    # Numerada: ajuda a achar a coluna N em arquivo largo.
+                    return f"{secao + 1} · {cabecalho[secao]}"
             return f"Coluna {secao + 1}"
         return str(self.linha_no_documento(secao) + 1)
 
